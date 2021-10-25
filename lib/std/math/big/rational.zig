@@ -540,7 +540,7 @@ test "big.rational set" {
 
 test "big.rational setFloat" {
     // TODO https://github.com/ziglang/zig/issues/10026
-    if (native_arch == .wasm32) return error.SkipZigTest;
+    if (native_arch.ptrBitWidth() < 64) return error.SkipZigTest;
 
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
