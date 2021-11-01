@@ -9,14 +9,15 @@ const mem = std.mem;
 const Mir = @import("Mir.zig");
 const bits = @import("bits.zig");
 const link = @import("../../link.zig");
-const Module = @import("../../Module.zig");
 const ErrorMsg = Module.ErrorMsg;
+const Module = @import("../../Module.zig");
 const assert = std.debug.assert;
 const DW = std.dwarf;
 const leb128 = std.leb;
 const Instruction = bits.Instruction;
 const Register = bits.Register;
 const DebugInfoOutput = @import("../../codegen.zig").DebugInfoOutput;
+const Encoder = bits.Encoder;
 
 mir: Mir,
 bin_file: *link.File,
@@ -43,6 +44,7 @@ pub fn emitMir(emit: *Emit) !void {
         const inst = @intCast(u32, index);
         switch (tag) {
             .push => try emit.mirPush(inst),
+            .ret => try emit.mirRet(inst),
             else => {
                 return emit.fail("Implement MIR->Isel lowering for x86_64 for pseudo-inst: {s}", .{tag});
             },
@@ -61,22 +63,27 @@ fn mirPush(emit: *Emit, inst: Mir.Inst.Index) !void {
     const tag = emit.mir.instructions.items(.tag)[inst];
     const ops = emit.mir.instructions.items(.ops)[inst];
     assert(tag == .push);
+    const encoder = try Encoder.init(emit.code, 6);
     const flag = @truncate(u1, ops);
     const reg = @intToEnum(Register, @truncate(u7, ops >> 9));
     if (flag == 0b0) {
         // PUSH reg
-        try emit.code.append(0x50 | @intCast(u8, reg.lowId()));
+        encoder.opcode_1byte(0x50 | @intCast(u8, reg.lowId()));
     } else {
         // PUSH r/m64
         const imm = emit.mir.instructions.items(.data)[inst].imm;
-        const mod: u2 = if (@truncate(i8, imm) == imm) 0b01 else 0b10;
-        const mod_rm = (@intCast(u8, mod) << 6) | (@intCast(u8, Register.rsi.lowId()) << 3) | reg.lowId();
-        try emit.code.ensureUnusedCapacity(2);
-        emit.code.appendSliceAssumeCapacity(&.{ 0xff, mod_rm });
-        if (mod == 0b01) {
-            mem.writeIntLittle(i8, try emit.code.addOne(), @intCast(i8, imm));
-        } else {
-            mem.writeIntLittle(i32, try emit.code.addManyAsArray(4), imm);
+        encoder.opcode_1byte(0xff);
+        if (math.cast(i8, imm)) |imm_i8| {
+            encoder.modRm_indirectDisp8(Register.rsi.lowId(), reg.lowId());
+            encoder.imm8(@intCast(i8, imm_i8));
+        } else |_| {
+            encoder.modRm_indirectDisp32(Register.rsi.lowId(), reg.lowId());
+            encoder.imm32(imm);
         }
     }
+}
+
+fn mirRet(emit: *Emit, inst: Mir.Inst.Index) !void {
+    _ = emit;
+    _ = inst;
 }
