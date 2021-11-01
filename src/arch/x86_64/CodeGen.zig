@@ -320,6 +320,7 @@ pub fn generate(
     defer mir.deinit(bin_file.allocator);
 
     var tmp_code = std.ArrayList(u8).init(bin_file.allocator);
+    defer tmp_code.deinit();
     var emit = Emit{
         .mir = mir,
         .bin_file = bin_file,
@@ -339,6 +340,7 @@ pub fn generate(
         },
         else => |e| return e,
     };
+    log.debug("tmp_code => {x}", .{std.fmt.fmtSliceHexLower(tmp_code.items)});
 
     if (function.err_msg) |em| {
         return FnResult{ .fail = em };
@@ -1683,8 +1685,8 @@ fn genX8664BinMathCode(
                     });
                     encoder.opcode_1byte(mr + 1);
                     encoder.modRm_direct(
-                        src_reg.low_id(),
-                        dst_reg.low_id(),
+                        src_reg.lowId(),
+                        dst_reg.lowId(),
                     );
                 },
                 .immediate => |imm| {
@@ -1702,7 +1704,7 @@ fn genX8664BinMathCode(
                         encoder.opcode_1byte(0x83);
                         encoder.modRm_direct(
                             opx,
-                            dst_reg.low_id(),
+                            dst_reg.lowId(),
                         );
                         encoder.imm8(@intCast(i8, imm32));
                     } else {
@@ -1715,7 +1717,7 @@ fn genX8664BinMathCode(
                         encoder.opcode_1byte(0x81);
                         encoder.modRm_direct(
                             opx,
-                            dst_reg.low_id(),
+                            dst_reg.lowId(),
                         );
                         encoder.imm32(@intCast(i32, imm32));
                     }
@@ -1739,14 +1741,14 @@ fn genX8664BinMathCode(
                     encoder.opcode_1byte(mr + 3);
                     if (adj_off <= std.math.maxInt(i8)) {
                         encoder.modRm_indirectDisp8(
-                            dst_reg.low_id(),
-                            Register.ebp.low_id(),
+                            dst_reg.lowId(),
+                            Register.ebp.lowId(),
                         );
                         encoder.disp8(-@intCast(i8, adj_off));
                     } else {
                         encoder.modRm_indirectDisp32(
-                            dst_reg.low_id(),
-                            Register.ebp.low_id(),
+                            dst_reg.lowId(),
+                            Register.ebp.lowId(),
                         );
                         encoder.disp32(-@intCast(i32, adj_off));
                     }
@@ -1826,8 +1828,8 @@ fn genX8664Imul(
                     });
                     encoder.opcode_2byte(0x0f, 0xaf);
                     encoder.modRm_direct(
-                        dst_reg.low_id(),
-                        src_reg.low_id(),
+                        dst_reg.lowId(),
+                        src_reg.lowId(),
                     );
                 },
                 .immediate => |imm| {
@@ -1855,8 +1857,8 @@ fn genX8664Imul(
                         });
                         encoder.opcode_1byte(0x6B);
                         encoder.modRm_direct(
-                            dst_reg.low_id(),
-                            dst_reg.low_id(),
+                            dst_reg.lowId(),
+                            dst_reg.lowId(),
                         );
                         encoder.imm8(@intCast(i8, imm));
                     } else if (math.minInt(i32) <= imm and imm <= math.maxInt(i32)) {
@@ -1869,8 +1871,8 @@ fn genX8664Imul(
                         });
                         encoder.opcode_1byte(0x69);
                         encoder.modRm_direct(
-                            dst_reg.low_id(),
-                            dst_reg.low_id(),
+                            dst_reg.lowId(),
+                            dst_reg.lowId(),
                         );
                         encoder.imm32(@intCast(i32, imm));
                     } else {
@@ -1912,8 +1914,8 @@ fn genX8664Imul(
                     });
                     encoder.opcode_2byte(0x0f, 0xaf);
                     encoder.modRm_direct(
-                        dst_reg.low_id(),
-                        src_reg.low_id(),
+                        dst_reg.lowId(),
+                        src_reg.lowId(),
                     );
                     // copy dst_reg back out
                     return self.genSetStack(dst_ty, off, MCValue{ .register = dst_reg });
@@ -1956,15 +1958,15 @@ fn genX8664ModRMRegToStack(self: *Self, ty: Type, off: u32, reg: Register, opcod
     if (i_adj_off < std.math.maxInt(i8)) {
         // example: 48 89 55 7f           mov    QWORD PTR [rbp+0x7f],rdx
         encoder.modRm_indirectDisp8(
-            reg.low_id(),
-            Register.ebp.low_id(),
+            reg.lowId(),
+            Register.ebp.lowId(),
         );
         encoder.disp8(@intCast(i8, i_adj_off));
     } else {
         // example: 48 89 95 80 00 00 00  mov    QWORD PTR [rbp+0x80],rdx
         encoder.modRm_indirectDisp32(
-            reg.low_id(),
-            Register.ebp.low_id(),
+            reg.lowId(),
+            Register.ebp.lowId(),
         );
         encoder.disp32(i_adj_off);
     }
@@ -2377,7 +2379,7 @@ fn airCondBr(self: *Self, inst: Air.Inst.Index) !void {
                 encoder.opcode_1byte(0xf6);
                 encoder.modRm_direct(
                     0,
-                    reg.low_id(),
+                    reg.lowId(),
                 );
                 encoder.disp8(1);
                 break :blk 0x84;
@@ -2828,7 +2830,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
                         const reg_name = ins[4 + l + 2 ..];
                         const reg = parseRegName(reg_name) orelse
                             return self.fail("unrecognized register: '{s}'", .{reg_name});
-                        const low_id: u8 = reg.low_id();
+                        const low_id: u8 = reg.lowId();
                         if (reg.isExtended()) {
                             try self.code.appendSlice(&.{ 0x41, 0b1010000 | low_id });
                         } else {
@@ -2841,7 +2843,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
                         const reg_name = ins[3 + l + 2 ..];
                         const reg = parseRegName(reg_name) orelse
                             return self.fail("unrecognized register: '{s}'", .{reg_name});
-                        const low_id: u8 = reg.low_id();
+                        const low_id: u8 = reg.lowId();
                         if (reg.isExtended()) {
                             try self.code.appendSlice(&.{ 0x41, 0b1011000 | low_id });
                         } else {
@@ -3043,7 +3045,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             });
             encoder.modRm_direct(
                 0,
-                reg.low_id(),
+                reg.lowId(),
             );
         },
         .compare_flags_signed => |op| {
@@ -3068,8 +3070,8 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                 // Section 3.1.1.1 of the Intel x64 Manual states that "/r indicates that the
                 // ModR/M byte of the instruction contains a register operand and an r/m operand."
                 encoder.modRm_direct(
-                    reg.low_id(),
-                    reg.low_id(),
+                    reg.lowId(),
+                    reg.lowId(),
                 );
 
                 return;
@@ -3086,7 +3088,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                 encoder.rex(.{
                     .b = reg.isExtended(),
                 });
-                encoder.opcode_withReg(0xB8, reg.low_id());
+                encoder.opcode_withReg(0xB8, reg.lowId());
 
                 // no ModR/M byte
 
@@ -3107,7 +3109,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                     .w = true,
                     .b = reg.isExtended(),
                 });
-                encoder.opcode_withReg(0xB8, reg.low_id());
+                encoder.opcode_withReg(0xB8, reg.lowId());
                 encoder.imm64(x);
             }
         },
@@ -3129,7 +3131,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             // byte 2
             encoder.opcode_1byte(0x8D);
             // byte 3
-            encoder.modRm_RIPDisp32(reg.low_id());
+            encoder.modRm_RIPDisp32(reg.lowId());
             // byte 4-7
             encoder.disp32(offset);
 
@@ -3150,7 +3152,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                 .b = src_reg.isExtended(),
             });
             encoder.opcode_1byte(0x8B);
-            encoder.modRm_direct(reg.low_id(), src_reg.low_id());
+            encoder.modRm_direct(reg.lowId(), src_reg.lowId());
         },
         .memory => |x| {
             if (self.bin_file.options.pie) {
@@ -3168,7 +3170,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                     .r = reg.isExtended(),
                 });
                 encoder.opcode_1byte(0x8D);
-                encoder.modRm_RIPDisp32(reg.low_id());
+                encoder.modRm_RIPDisp32(reg.lowId());
                 encoder.disp32(0);
 
                 const offset = @intCast(u32, self.code.items.len);
@@ -3197,7 +3199,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                     .b = reg.isExtended(),
                 });
                 encoder.opcode_1byte(0x8B);
-                encoder.modRm_indirectDisp0(reg.low_id(), reg.low_id());
+                encoder.modRm_indirectDisp0(reg.lowId(), reg.lowId());
             } else if (x <= math.maxInt(i32)) {
                 // Moving from memory to a register is a variant of `8B /r`.
                 // Since we're using 64-bit moves, we require a REX.
@@ -3214,7 +3216,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                 });
                 encoder.opcode_1byte(0x8B);
                 // effective address = [SIB]
-                encoder.modRm_SIBDisp0(reg.low_id());
+                encoder.modRm_SIBDisp0(reg.lowId());
                 // SIB = disp32
                 encoder.sib_disp32();
                 encoder.disp32(@intCast(i32, x));
@@ -3258,7 +3260,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                         .b = reg.isExtended(),
                     });
                     encoder.opcode_1byte(0x8B);
-                    encoder.modRm_indirectDisp0(reg.low_id(), reg.low_id());
+                    encoder.modRm_indirectDisp0(reg.lowId(), reg.lowId());
                 }
             }
         },
@@ -3277,11 +3279,11 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             encoder.opcode_1byte(0x8B);
             if (std.math.minInt(i8) <= ioff and ioff <= std.math.maxInt(i8)) {
                 // Example: 48 8b 4d 7f           mov    rcx,QWORD PTR [rbp+0x7f]
-                encoder.modRm_indirectDisp8(reg.low_id(), Register.ebp.low_id());
+                encoder.modRm_indirectDisp8(reg.lowId(), Register.ebp.lowId());
                 encoder.disp8(@intCast(i8, ioff));
             } else {
                 // Example: 48 8b 8d 80 00 00 00  mov    rcx,QWORD PTR [rbp+0x80]
-                encoder.modRm_indirectDisp32(reg.low_id(), Register.ebp.low_id());
+                encoder.modRm_indirectDisp32(reg.lowId(), Register.ebp.lowId());
                 encoder.disp32(ioff);
             }
         },

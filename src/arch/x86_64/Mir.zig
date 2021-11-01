@@ -216,10 +216,10 @@ pub fn genOps(opts: struct {
 }) u16 {
     var ops: u16 = 0;
     if (opts.reg1) |reg1| {
-        ops |= @truncate(u3, reg1.id());
+        ops |= @intCast(u16, @enumToInt(reg1)) << 9;
     }
     if (opts.reg2) |reg2| {
-        ops |= @truncate(u3, reg2.id());
+        ops |= @intCast(u16, @enumToInt(reg2)) << 2;
     }
     ops |= opts.flags;
     return ops;
