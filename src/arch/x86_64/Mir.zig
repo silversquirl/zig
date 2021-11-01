@@ -159,6 +159,19 @@ pub const Inst = struct {
         ///       0b10  retn imm16
         ///       0b11  retn
         ret,
+
+        /// Pseudo-instructions
+        /// call extern
+        call_extern,
+
+        /// end of prologue
+        dbg_prologue_end,
+
+        /// start of epilogue
+        dbg_epilogue_begin,
+
+        /// update debug line
+        dbg_line,
     };
 
     /// The position of an MIR instruction within the `Mir` instructions array.
@@ -194,4 +207,20 @@ pub fn deinit(mir: *Mir, gpa: *std.mem.Allocator) void {
     mir.instructions.deinit(gpa);
     gpa.free(mir.extra);
     mir.* = undefined;
+}
+
+pub fn genOps(opts: struct {
+    reg1: ?Register = null,
+    reg2: ?Register = null,
+    flags: u2 = 0,
+}) u16 {
+    var ops: u16 = 0;
+    if (opts.reg1) |reg1| {
+        ops |= @truncate(u3, reg1.id());
+    }
+    if (opts.reg2) |reg2| {
+        ops |= @truncate(u3, reg2.id());
+    }
+    ops |= opts.flags;
+    return ops;
 }

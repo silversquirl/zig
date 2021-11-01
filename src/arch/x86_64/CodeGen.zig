@@ -14,6 +14,7 @@ const Allocator = mem.Allocator;
 const Compilation = @import("../../Compilation.zig");
 const DebugInfoOutput = @import("../../codegen.zig").DebugInfoOutput;
 const DW = std.dwarf;
+const Emit = @import("Emit.zig");
 const Encoder = @import("bits.zig").Encoder;
 const ErrorMsg = Module.ErrorMsg;
 const FnResult = @import("../../codegen.zig").FnResult;
@@ -57,11 +58,11 @@ mir_extra: std.ArrayListUnmanaged(u32) = .{},
 
 prev_di_line: u32,
 prev_di_column: u32,
+prev_di_pc: usize,
+
 /// Byte offset within the source file of the ending curly.
 end_di_line: u32,
 end_di_column: u32,
-/// Relative to the beginning of `code`.
-prev_di_pc: usize,
 
 /// The value is an offset into the `Function` `code` from the beginning.
 /// To perform the reloc, write 32-bit signed little-endian integer
@@ -318,6 +319,27 @@ pub fn generate(
     };
     defer mir.deinit(bin_file.allocator);
 
+    var tmp_code = std.ArrayList(u8).init(bin_file.allocator);
+    var emit = Emit{
+        .mir = mir,
+        .bin_file = bin_file,
+        .debug_output = debug_output,
+        .target = &bin_file.options.target,
+        .src_loc = src_loc,
+        .code = &tmp_code,
+        .prev_di_pc = 0,
+        .prev_di_line = module_fn.lbrace_line,
+        .prev_di_column = module_fn.lbrace_column,
+    };
+    emit.emitMir() catch |err| switch (err) {
+        error.EmitFail => {
+            log.debug("MIR error: {s}", .{emit.err_msg.?});
+            emit.err_msg.?.destroy(bin_file.allocator);
+            // return FnResult{ .fail = emit.err_msg.? };
+        },
+        else => |e| return e,
+    };
+
     if (function.err_msg) |em| {
         return FnResult{ .fail = em };
     } else {
@@ -325,11 +347,45 @@ pub fn generate(
     }
 }
 
+fn addInst(self: *Self, inst: Mir.Inst) error{OutOfMemory}!Mir.Inst.Index {
+    const gpa = self.gpa;
+    try self.mir_instructions.ensureUnusedCapacity(gpa, 1);
+    const result_index = @intCast(Air.Inst.Index, self.mir_instructions.len);
+    self.mir_instructions.appendAssumeCapacity(inst);
+    return result_index;
+}
+
+pub fn addExtra(self: *Self, extra: anytype) Allocator.Error!u32 {
+    const fields = std.meta.fields(@TypeOf(extra));
+    try self.mir_extra.ensureUnusedCapacity(self.gpa, fields.len);
+    return self.addExtraAssumeCapacity(extra);
+}
+
+pub fn addExtraAssumeCapacity(self: *Self, extra: anytype) u32 {
+    const fields = std.meta.fields(@TypeOf(extra));
+    const result = @intCast(u32, self.mir_extra.items.len);
+    inline for (fields) |field| {
+        self.mir_extra.appendAssumeCapacity(switch (field.field_type) {
+            u32 => @field(extra, field.name),
+            i32 => @bitCast(u32, @field(extra, field.name)),
+            else => @compileError("bad field type"),
+        });
+    }
+    return result;
+}
+
 fn gen(self: *Self) !void {
     try self.code.ensureUnusedCapacity(11);
 
     const cc = self.fn_type.fnCallingConvention();
     if (cc != .Naked) {
+        _ = try self.addInst(.{
+            .tag = .push,
+            .ops = Mir.genOps(.{
+                .reg1 = .rbp,
+            }),
+            .data = undefined, // unused for push reg,
+        });
         // We want to subtract the aligned stack frame size from rsp here, but we don't
         // yet know how big it will be, so we leave room for a 4-byte stack size.
         // TODO During semantic analysis, check if there are no function calls. If there
