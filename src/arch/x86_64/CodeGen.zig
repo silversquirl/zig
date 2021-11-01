@@ -383,10 +383,20 @@ fn gen(self: *Self) !void {
     if (cc != .Naked) {
         _ = try self.addInst(.{
             .tag = .push,
-            .ops = Mir.genOps(.{
+            .ops = (Mir.Ops{
                 .reg1 = .rbp,
-            }),
+                .flags = 0b00,
+            }).encode(),
             .data = undefined, // unused for push reg,
+        });
+        _ = try self.addInst(.{
+            .tag = .mov,
+            .ops = (Mir.Ops{
+                .reg1 = .rsp,
+                .reg2 = .rbp,
+                .flags = 0b00,
+            }).encode(),
+            .data = undefined,
         });
         // We want to subtract the aligned stack frame size from rsp here, but we don't
         // yet know how big it will be, so we leave room for a 4-byte stack size.
@@ -443,9 +453,9 @@ fn gen(self: *Self) !void {
 
         _ = try self.addInst(.{
             .tag = .ret,
-            .ops = Mir.genOps(.{
+            .ops = (Mir.Ops{
                 .flags = 0b11,
-            }),
+            }).encode(),
             .data = undefined,
         });
     } else {

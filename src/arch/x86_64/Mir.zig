@@ -209,18 +209,27 @@ pub fn deinit(mir: *Mir, gpa: *std.mem.Allocator) void {
     mir.* = undefined;
 }
 
-pub fn genOps(opts: struct {
-    reg1: ?Register = null,
-    reg2: ?Register = null,
-    flags: u2 = 0,
-}) u16 {
-    var ops: u16 = 0;
-    if (opts.reg1) |reg1| {
-        ops |= @intCast(u16, @enumToInt(reg1)) << 9;
+pub const Ops = struct {
+    reg1: Register = .none,
+    reg2: Register = .none,
+    flags: u2,
+
+    pub fn encode(self: Ops) u16 {
+        var ops: u16 = 0;
+        ops |= @intCast(u16, @enumToInt(self.reg1)) << 9;
+        ops |= @intCast(u16, @enumToInt(self.reg2)) << 2;
+        ops |= self.flags;
+        return ops;
     }
-    if (opts.reg2) |reg2| {
-        ops |= @intCast(u16, @enumToInt(reg2)) << 2;
+
+    pub fn decode(ops: u16) Ops {
+        const reg1 = @intToEnum(Register, @truncate(u7, ops >> 9));
+        const reg2 = @intToEnum(Register, @truncate(u7, ops >> 2));
+        const flags = @truncate(u2, ops);
+        return .{
+            .reg1 = reg1,
+            .reg2 = reg2,
+            .flags = flags,
+        };
     }
-    ops |= opts.flags;
-    return ops;
-}
+};

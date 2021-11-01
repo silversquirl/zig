@@ -43,6 +43,10 @@ pub const Register = enum(u7) {
     al, cl, dl, bl, ah, ch, dh, bh,
     r8b, r9b, r10b, r11b, r12b, r13b, r14b, r15b,
 
+    // Pseudo, used only for MIR to signify that the
+    // operand is not a register but an immediate, etc.
+    none,
+
     /// Returns the bit-width of the register.
     pub fn size(self: Register) u7 {
         return switch (@enumToInt(self)) {
