@@ -440,6 +440,14 @@ fn gen(self: *Self) !void {
             0x5d, // pop rbp
             0xc3, // ret
         });
+
+        _ = try self.addInst(.{
+            .tag = .ret,
+            .ops = Mir.genOps(.{
+                .flags = 0b11,
+            }),
+            .data = undefined,
+        });
     } else {
         try self.dbgSetPrologueEnd();
         try self.genBody(self.air.getMainBody());

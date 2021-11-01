@@ -84,6 +84,24 @@ fn mirPush(emit: *Emit, inst: Mir.Inst.Index) !void {
 }
 
 fn mirRet(emit: *Emit, inst: Mir.Inst.Index) !void {
-    _ = emit;
-    _ = inst;
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    const ops = emit.mir.instructions.items(.ops)[inst];
+    assert(tag == .ret);
+    const encoder = try Encoder.init(emit.code, 3);
+    switch (@truncate(u2, ops)) {
+        0b00 => {
+            // RETF imm16
+            const imm = emit.mir.instructions.items(.data)[inst].imm;
+            encoder.opcode_1byte(0xca);
+            encoder.imm16(@intCast(i16, imm));
+        },
+        0b01 => encoder.opcode_1byte(0xcb), // RETF
+        0b10 => {
+            // RET imm16
+            const imm = emit.mir.instructions.items(.data)[inst].imm;
+            encoder.opcode_1byte(0xc2);
+            encoder.imm16(@intCast(i16, imm));
+        },
+        0b11 => encoder.opcode_1byte(0xc3), // RET
+    }
 }
