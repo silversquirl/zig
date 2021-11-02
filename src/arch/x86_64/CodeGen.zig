@@ -51,7 +51,7 @@ stack_align: u32,
 /// MIR Instructions
 mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
 /// MIR extra data
-mir_extra: std.ArrayListUnmanaged(u64) = .{},
+mir_extra: std.ArrayListUnmanaged(u32) = .{},
 
 /// Byte offset within the source file of the ending curly.
 end_di_line: u32,
@@ -347,8 +347,8 @@ pub fn addExtraAssumeCapacity(self: *Self, extra: anytype) u32 {
     const result = @intCast(u32, self.mir_extra.items.len);
     inline for (fields) |field| {
         self.mir_extra.appendAssumeCapacity(switch (field.field_type) {
-            u64 => @field(extra, field.name),
-            i64 => @bitCast(u64, @field(extra, field.name)),
+            u32 => @field(extra, field.name),
+            i32 => @bitCast(u32, @field(extra, field.name)),
             else => @compileError("bad field type"),
         });
     }
@@ -362,7 +362,6 @@ fn gen(self: *Self) InnerError!void {
             .tag = .push,
             .ops = (Mir.Ops{
                 .reg1 = .rbp,
-                .flags = 0b00,
             }).encode(),
             .data = undefined, // unused for push reg,
         });
@@ -371,7 +370,6 @@ fn gen(self: *Self) InnerError!void {
             .ops = (Mir.Ops{
                 .reg1 = .rbp,
                 .reg2 = .rsp,
-                .flags = 0b00,
             }).encode(),
             .data = undefined,
         });
@@ -383,10 +381,10 @@ fn gen(self: *Self) InnerError!void {
             .tag = .sub,
             .ops = (Mir.Ops{
                 .reg1 = .rsp,
-                .flags = 0b00,
             }).encode(),
             .data = .{ .imm = 0 },
         });
+
         // self.code.appendSliceAssumeCapacity(&[_]u8{
         //     0x55, // push rbp
         //     0x48, 0x89, 0xe5, // mov rbp, rsp
@@ -440,7 +438,6 @@ fn gen(self: *Self) InnerError!void {
             .tag = .pop,
             .ops = (Mir.Ops{
                 .reg1 = .rbp,
-                .flags = 0b00,
             }).encode(),
             .data = undefined,
         });

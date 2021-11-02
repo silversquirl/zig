@@ -16,7 +16,7 @@ const Register = bits.Register;
 
 instructions: std.MultiArrayList(Inst).Slice,
 /// The meaning of this data is determined by `Inst.Tag` value.
-extra: []const u64,
+extra: []const u32,
 
 pub const Inst = struct {
     tag: Tag,
@@ -211,6 +211,25 @@ pub const ImmPair = struct {
     operand: i32,
 };
 
+pub const Imm64 = struct {
+    msb: u32,
+    lsb: u32,
+
+    pub fn encode(v: u64) Imm64 {
+        return .{
+            .msb = @truncate(u32, v >> 32),
+            .lsb = @bitCast(i32, @truncate(u32, v)),
+        };
+    }
+
+    pub fn decode(imm: Imm64) u64 {
+        var res: u64 = 0;
+        res |= (@intCast(u64, imm.msb) << 32);
+        res |= @intCast(u64, imm.lsb);
+        return res;
+    }
+};
+
 pub fn deinit(mir: *Mir, gpa: *std.mem.Allocator) void {
     mir.instructions.deinit(gpa);
     gpa.free(mir.extra);
@@ -248,8 +267,8 @@ pub fn extraData(mir: Mir, comptime T: type, index: usize) struct { data: T, end
     var result: T = undefined;
     inline for (fields) |field| {
         @field(result, field.name) = switch (field.field_type) {
-            u64 => mir.extra[i],
-            i64 => @bitCast(i64, mir.extra[i]),
+            u32 => mir.extra[i],
+            i32 => @bitCast(i32, mir.extra[i]),
             else => @compileError("bad field type"),
         };
         i += 1;
