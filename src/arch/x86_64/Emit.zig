@@ -43,12 +43,21 @@ pub fn emitMir(emit: *Emit) InnerError!void {
     for (mir_tags) |tag, index| {
         const inst = @intCast(u32, index);
         switch (tag) {
-            .mov => try emit.mirMov(inst),
-            .sub => try emit.mirSub(inst),
-            .push => try emit.mirPush(inst),
-            .pop => try emit.mirPop(inst),
-            .ret => try emit.mirRet(inst),
+            .adc => try emit.mirCommonOp(.adc, inst),
+            .add => try emit.mirCommonOp(.add, inst),
+            .sub => try emit.mirCommonOp(.sub, inst),
+            .xor => try emit.mirCommonOp(.xor, inst),
+            .@"and" => try emit.mirCommonOp(.@"and", inst),
+            .@"or" => try emit.mirCommonOp(.@"or", inst),
+            .sbb => try emit.mirCommonOp(.sbb, inst),
+            .cmp => try emit.mirCommonOp(.cmp, inst),
+            .mov => try emit.mirCommonOp(.mov, inst),
+
+            .lea => try emit.mirLea(inst),
             .movabs => try emit.mirMovabs(inst),
+            .push => try emit.mirPushPop(.push, inst),
+            .pop => try emit.mirPushPop(.pop, inst),
+            .ret => try emit.mirRet(inst),
             else => {
                 return emit.fail("Implement MIR->Isel lowering for x86_64 for pseudo-inst: {s}", .{tag});
             },
@@ -99,18 +108,6 @@ fn mirPushPop(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!v
     }
 }
 
-fn mirPush(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
-    const tag = emit.mir.instructions.items(.tag)[inst];
-    assert(tag == .push);
-    return emit.mirPushPop(tag, inst);
-}
-
-fn mirPop(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
-    const tag = emit.mir.instructions.items(.tag)[inst];
-    assert(tag == .pop);
-    return emit.mirPushPop(tag, inst);
-}
-
 fn mirRet(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     const tag = emit.mir.instructions.items(.tag)[inst];
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
@@ -139,32 +136,61 @@ const OpCode = struct {
     modrm_ext: u3,
 };
 fn getOpCode(tag: Mir.Inst.Tag, ops: Mir.Ops) OpCode {
-    return switch (ops.flags) {
-        0b00 => if (ops.reg2 == .none) switch (tag) {
-            .mov => OpCode{ .opc = 0xc7, .modrm_ext = 0x0 },
-            .sub => OpCode{ .opc = 0x81, .modrm_ext = 0x5 },
+    blk: {
+        // OP r/m64, imm32
+        switch (ops.flags) {
+            0b00, 0b10 => if (ops.reg2 != .none) break :blk,
+            0b11 => {},
+            0b01 => break :blk,
+        }
+        return switch (tag) {
+            .adc => .{ .opc = 0x81, .modrm_ext = 0x2 },
+            .add => .{ .opc = 0x81, .modrm_ext = 0x0 },
+            .sub => .{ .opc = 0x81, .modrm_ext = 0x5 },
+            .xor => .{ .opc = 0x81, .modrm_ext = 0x6 },
+            .@"and" => .{ .opc = 0x81, .modrm_ext = 0x4 },
+            .@"or" => .{ .opc = 0x81, .modrm_ext = 0x1 },
+            .sbb => .{ .opc = 0x81, .modrm_ext = 0x3 },
+            .cmp => .{ .opc = 0x81, .modrm_ext = 0x7 },
+            .mov => .{ .opc = 0xc7, .modrm_ext = 0x0 },
             else => unreachable,
-        } else switch (tag) {
-            .mov => OpCode{ .opc = 0x89, .modrm_ext = ops.reg2.lowId() },
-            .sub => OpCode{ .opc = 0x29, .modrm_ext = ops.reg2.lowId() },
-            else => unreachable,
+        };
+    }
+    switch (ops.flags) {
+        0b00, 0b10 => {
+            const opc: u8 = switch (tag) {
+                // OP r/m64, r64
+                .adc => 0x11,
+                .add => 0x01,
+                .sub => 0x29,
+                .xor => 0x31,
+                .@"and" => 0x21,
+                .@"or" => 0x09,
+                .sbb => 0x19,
+                .cmp => 0x39,
+                .mov => 0x89,
+                else => unreachable,
+            };
+            return .{ .opc = opc, .modrm_ext = ops.reg2.lowId() };
         },
-        0b01 => switch (tag) {
-            .mov => OpCode{ .opc = 0x8b, .modrm_ext = ops.reg2.lowId() },
-            else => unreachable,
+        0b01 => {
+            const opc: u8 = switch (tag) {
+                // OP r64, r/m64
+                .adc => 0x13,
+                .add => 0x03,
+                .sub => 0x2b,
+                .xor => 0x33,
+                .@"and" => 0x23,
+                .@"or" => 0x0b,
+                .sbb => 0x1b,
+                .cmp => 0x3b,
+                .mov => 0x8b,
+                else => unreachable,
+            };
+            return .{ .opc = opc, .modrm_ext = ops.reg1.lowId() };
         },
-        0b10 => if (ops.reg2 == .none) switch (tag) {
-            .mov => OpCode{ .opc = 0xc7, .modrm_ext = 0x0 },
-            else => unreachable,
-        } else switch (tag) {
-            .mov => OpCode{ .opc = 0x89, .modrm_ext = ops.reg2.lowId() },
-            else => unreachable,
-        },
-        0b11 => switch (tag) {
-            .mov => OpCode{ .opc = 0xc7, .modrm_ext = 0x0 },
-            else => unreachable,
-        },
-    };
+        0b11 => unreachable,
+    }
 }
 
 fn mirCommonOp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
@@ -174,7 +200,7 @@ fn mirCommonOp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!
         0b00 => blk: {
             if (ops.reg2 == .none) {
                 // OP reg1, imm32
-                // OP r/m, imm32
+                // OP r/m64, imm32
                 const imm = emit.mir.instructions.items(.data)[inst].imm;
                 const encoder = try Encoder.init(emit.code, 7);
                 encoder.rex(.{
@@ -187,7 +213,7 @@ fn mirCommonOp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!
                 break :blk;
             }
             // OP reg1, reg2
-            // OP r/m, r
+            // OP r/m64, r64
             const encoder = try Encoder.init(emit.code, 3);
             encoder.rex(.{
                 .w = ops.reg1.size() == 64,
@@ -204,11 +230,11 @@ fn mirCommonOp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!
             const encoder = try Encoder.init(emit.code, 7);
             encoder.rex(.{
                 .w = ops.reg1.size() == 64,
-                .r = ops.reg2.isExtended(),
-                .b = ops.reg1.isExtended(),
+                .r = ops.reg1.isExtended(),
+                .b = ops.reg2.isExtended(),
             });
             encoder.opcode_1byte(opcode.opc);
-            encoder.modRm_indirectDisp32(opcode.modrm_ext, ops.reg1.lowId());
+            encoder.modRm_indirectDisp32(opcode.modrm_ext, ops.reg2.lowId());
             encoder.disp32(imm);
         },
         0b10 => blk: {
@@ -270,16 +296,43 @@ fn mirCommonOp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!
     }
 }
 
-fn mirMov(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+fn mirLea(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     const tag = emit.mir.instructions.items(.tag)[inst];
-    assert(tag == .mov);
-    return emit.mirCommonOp(tag, inst);
-}
+    assert(tag == .lea);
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    assert(ops.flags == 0b01);
+    const imm = emit.mir.instructions.items(.data)[inst].imm;
 
-fn mirSub(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
-    const tag = emit.mir.instructions.items(.tag)[inst];
-    assert(tag == .sub);
-    return emit.mirCommonOp(tag, inst);
+    if (imm == 0) {
+        const encoder = try Encoder.init(emit.code, 3);
+        encoder.rex(.{
+            .w = ops.reg1.size() == 64,
+            .r = ops.reg1.isExtended(),
+            .b = ops.reg2.isExtended(),
+        });
+        encoder.opcode_1byte(0x8d);
+        encoder.modRm_indirectDisp0(ops.reg1.lowId(), ops.reg2.lowId());
+    } else if (imm <= math.maxInt(i8)) {
+        const encoder = try Encoder.init(emit.code, 4);
+        encoder.rex(.{
+            .w = ops.reg1.size() == 64,
+            .r = ops.reg1.isExtended(),
+            .b = ops.reg2.isExtended(),
+        });
+        encoder.opcode_1byte(0x8d);
+        encoder.modRm_indirectDisp8(ops.reg1.lowId(), ops.reg2.lowId());
+        encoder.disp8(@intCast(i8, imm));
+    } else {
+        const encoder = try Encoder.init(emit.code, 7);
+        encoder.rex(.{
+            .w = ops.reg1.size() == 64,
+            .r = ops.reg1.isExtended(),
+            .b = ops.reg2.isExtended(),
+        });
+        encoder.opcode_1byte(0x8d);
+        encoder.modRm_indirectDisp32(ops.reg1.lowId(), ops.reg2.lowId());
+        encoder.disp32(imm);
+    }
 }
 
 fn mirMovabs(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
