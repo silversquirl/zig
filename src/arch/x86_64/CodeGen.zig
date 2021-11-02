@@ -34,15 +34,12 @@ const InnerError = error{
     CodegenFail,
 };
 
-arch: std.Target.Cpu.Arch,
 gpa: *Allocator,
 air: Air,
 liveness: Liveness,
 bin_file: *link.File,
 target: *const std.Target,
 mod_fn: *const Module.Fn,
-code: *std.ArrayList(u8),
-debug_output: DebugInfoOutput,
 err_msg: ?*ErrorMsg,
 args: []MCValue,
 ret_mcv: MCValue,
@@ -55,10 +52,6 @@ stack_align: u32,
 mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
 /// MIR extra data
 mir_extra: std.ArrayListUnmanaged(u32) = .{},
-
-prev_di_line: u32,
-prev_di_column: u32,
-prev_di_pc: usize,
 
 /// Byte offset within the source file of the ending curly.
 end_di_line: u32,
@@ -245,7 +238,6 @@ const BigTomb = struct {
 const Self = @This();
 
 pub fn generate(
-    arch: std.Target.Cpu.Arch,
     bin_file: *link.File,
     src_loc: Module.SrcLoc,
     module_fn: *Module.Fn,
@@ -254,7 +246,7 @@ pub fn generate(
     code: *std.ArrayList(u8),
     debug_output: DebugInfoOutput,
 ) GenerateSymbolError!FnResult {
-    if (build_options.skip_non_native and builtin.cpu.arch != arch) {
+    if (build_options.skip_non_native and builtin.cpu.arch != bin_file.options.target.cpu.arch) {
         @panic("Attempted to compile for architecture that was disabled by build configuration");
     }
 
@@ -270,15 +262,12 @@ pub fn generate(
     try branch_stack.append(.{});
 
     var function = Self{
-        .arch = arch,
         .gpa = bin_file.allocator,
         .air = air,
         .liveness = liveness,
         .target = &bin_file.options.target,
         .bin_file = bin_file,
         .mod_fn = module_fn,
-        .code = code,
-        .debug_output = debug_output,
         .err_msg = null,
         .args = undefined, // populated after `resolveCallingConventionValues`
         .ret_mcv = undefined, // populated after `resolveCallingConventionValues`
@@ -287,9 +276,6 @@ pub fn generate(
         .branch_stack = &branch_stack,
         .src_loc = src_loc,
         .stack_align = undefined,
-        .prev_di_pc = 0,
-        .prev_di_line = module_fn.lbrace_line,
-        .prev_di_column = module_fn.lbrace_column,
         .end_di_line = module_fn.rbrace_line,
         .end_di_column = module_fn.rbrace_column,
     };
@@ -319,28 +305,21 @@ pub fn generate(
     };
     defer mir.deinit(bin_file.allocator);
 
-    var tmp_code = std.ArrayList(u8).init(bin_file.allocator);
-    defer tmp_code.deinit();
     var emit = Emit{
         .mir = mir,
         .bin_file = bin_file,
         .debug_output = debug_output,
         .target = &bin_file.options.target,
         .src_loc = src_loc,
-        .code = &tmp_code,
+        .code = code,
         .prev_di_pc = 0,
         .prev_di_line = module_fn.lbrace_line,
         .prev_di_column = module_fn.lbrace_column,
     };
     emit.emitMir() catch |err| switch (err) {
-        error.EmitFail => {
-            log.debug("MIR error: {s}", .{emit.err_msg.?});
-            emit.err_msg.?.destroy(bin_file.allocator);
-            // return FnResult{ .fail = emit.err_msg.? };
-        },
+        error.EmitFail => return FnResult{ .fail = emit.err_msg.? },
         else => |e| return e,
     };
-    log.debug("tmp_code => {x}", .{std.fmt.fmtSliceHexLower(tmp_code.items)});
 
     if (function.err_msg) |em| {
         return FnResult{ .fail = em };
@@ -376,9 +355,7 @@ pub fn addExtraAssumeCapacity(self: *Self, extra: anytype) u32 {
     return result;
 }
 
-fn gen(self: *Self) !void {
-    try self.code.ensureUnusedCapacity(11);
-
+fn gen(self: *Self) InnerError!void {
     const cc = self.fn_type.fnCallingConvention();
     if (cc != .Naked) {
         _ = try self.addInst(.{
@@ -398,6 +375,10 @@ fn gen(self: *Self) !void {
             }).encode(),
             .data = undefined,
         });
+        // We want to subtract the aligned stack frame size from rsp here, but we don't
+        // yet know how big it will be, so we leave room for a 4-byte stack size.
+        // TODO During semantic analysis, check if there are no function calls. If there
+        // are none, here we can omit the part where we subtract and then add rsp.
         _ = try self.addInst(.{
             .tag = .sub,
             .ops = (Mir.Ops{
@@ -406,58 +387,54 @@ fn gen(self: *Self) !void {
             }).encode(),
             .data = .{ .imm = 0 },
         });
-        // We want to subtract the aligned stack frame size from rsp here, but we don't
-        // yet know how big it will be, so we leave room for a 4-byte stack size.
-        // TODO During semantic analysis, check if there are no function calls. If there
-        // are none, here we can omit the part where we subtract and then add rsp.
-        self.code.appendSliceAssumeCapacity(&[_]u8{
-            0x55, // push rbp
-            0x48, 0x89, 0xe5, // mov rbp, rsp
-            0x48, 0x81, 0xec, // sub rsp, imm32 (with reloc)
-        });
-        const reloc_index = self.code.items.len;
-        self.code.items.len += 4;
+        // self.code.appendSliceAssumeCapacity(&[_]u8{
+        //     0x55, // push rbp
+        //     0x48, 0x89, 0xe5, // mov rbp, rsp
+        //     0x48, 0x81, 0xec, // sub rsp, imm32 (with reloc)
+        // });
+        // const reloc_index = self.code.items.len;
+        // self.code.items.len += 4;
 
-        try self.dbgSetPrologueEnd();
-        try self.genBody(self.air.getMainBody());
+        // try self.dbgSetPrologueEnd();
+        // try self.genBody(self.air.getMainBody());
 
-        const stack_end = self.max_end_stack;
-        if (stack_end > math.maxInt(i32))
-            return self.failSymbol("too much stack used in call parameters", .{});
-        const aligned_stack_end = mem.alignForward(stack_end, self.stack_align);
-        mem.writeIntLittle(u32, self.code.items[reloc_index..][0..4], @intCast(u32, aligned_stack_end));
+        // const stack_end = self.max_end_stack;
+        // if (stack_end > math.maxInt(i32))
+        //     return self.failSymbol("too much stack used in call parameters", .{});
+        // const aligned_stack_end = mem.alignForward(stack_end, self.stack_align);
+        // mem.writeIntLittle(u32, self.code.items[reloc_index..][0..4], @intCast(u32, aligned_stack_end));
 
-        if (self.code.items.len >= math.maxInt(i32)) {
-            return self.failSymbol("unable to perform relocation: jump too far", .{});
-        }
-        if (self.exitlude_jump_relocs.items.len == 1) {
-            self.code.items.len -= 5;
-        } else for (self.exitlude_jump_relocs.items) |jmp_reloc| {
-            const amt = self.code.items.len - (jmp_reloc + 4);
-            const s32_amt = @intCast(i32, amt);
-            mem.writeIntLittle(i32, self.code.items[jmp_reloc..][0..4], s32_amt);
-        }
+        // if (self.code.items.len >= math.maxInt(i32)) {
+        //     return self.failSymbol("unable to perform relocation: jump too far", .{});
+        // }
+        // if (self.exitlude_jump_relocs.items.len == 1) {
+        //     self.code.items.len -= 5;
+        // } else for (self.exitlude_jump_relocs.items) |jmp_reloc| {
+        //     const amt = self.code.items.len - (jmp_reloc + 4);
+        //     const s32_amt = @intCast(i32, amt);
+        //     mem.writeIntLittle(i32, self.code.items[jmp_reloc..][0..4], s32_amt);
+        // }
 
-        // Important to be after the possible self.code.items.len -= 5 above.
-        try self.dbgSetEpilogueBegin();
+        // // Important to be after the possible self.code.items.len -= 5 above.
+        // try self.dbgSetEpilogueBegin();
 
-        try self.code.ensureUnusedCapacity(9);
-        // add rsp, x
-        if (aligned_stack_end > math.maxInt(i8)) {
-            // example: 48 81 c4 ff ff ff 7f  add    rsp,0x7fffffff
-            self.code.appendSliceAssumeCapacity(&[_]u8{ 0x48, 0x81, 0xc4 });
-            const x = @intCast(u32, aligned_stack_end);
-            mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), x);
-        } else if (aligned_stack_end != 0) {
-            // example: 48 83 c4 7f           add    rsp,0x7f
-            const x = @intCast(u8, aligned_stack_end);
-            self.code.appendSliceAssumeCapacity(&[_]u8{ 0x48, 0x83, 0xc4, x });
-        }
+        // try self.code.ensureUnusedCapacity(9);
+        // // add rsp, x
+        // if (aligned_stack_end > math.maxInt(i8)) {
+        //     // example: 48 81 c4 ff ff ff 7f  add    rsp,0x7fffffff
+        //     self.code.appendSliceAssumeCapacity(&[_]u8{ 0x48, 0x81, 0xc4 });
+        //     const x = @intCast(u32, aligned_stack_end);
+        //     mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), x);
+        // } else if (aligned_stack_end != 0) {
+        //     // example: 48 83 c4 7f           add    rsp,0x7f
+        //     const x = @intCast(u8, aligned_stack_end);
+        //     self.code.appendSliceAssumeCapacity(&[_]u8{ 0x48, 0x83, 0xc4, x });
+        // }
 
-        self.code.appendSliceAssumeCapacity(&[_]u8{
-            0x5d, // pop rbp
-            0xc3, // ret
-        });
+        // self.code.appendSliceAssumeCapacity(&[_]u8{
+        //     0x5d, // pop rbp
+        //     0xc3, // ret
+        // });
 
         _ = try self.addInst(.{
             .tag = .pop,
@@ -475,13 +452,14 @@ fn gen(self: *Self) !void {
             .data = undefined,
         });
     } else {
-        try self.dbgSetPrologueEnd();
-        try self.genBody(self.air.getMainBody());
-        try self.dbgSetEpilogueBegin();
+        // try self.dbgSetPrologueEnd();
+        // try self.genBody(self.air.getMainBody());
+        // try self.dbgSetEpilogueBegin();
+        unreachable;
     }
 
     // Drop them off at the rbrace.
-    try self.dbgAdvancePCAndLine(self.end_di_line, self.end_di_column);
+    // try self.dbgAdvancePCAndLine(self.end_di_line, self.end_di_column);
 }
 
 fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
