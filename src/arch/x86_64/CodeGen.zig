@@ -51,7 +51,7 @@ stack_align: u32,
 /// MIR Instructions
 mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
 /// MIR extra data
-mir_extra: std.ArrayListUnmanaged(u32) = .{},
+mir_extra: std.ArrayListUnmanaged(u64) = .{},
 
 /// Byte offset within the source file of the ending curly.
 end_di_line: u32,
@@ -347,8 +347,8 @@ pub fn addExtraAssumeCapacity(self: *Self, extra: anytype) u32 {
     const result = @intCast(u32, self.mir_extra.items.len);
     inline for (fields) |field| {
         self.mir_extra.appendAssumeCapacity(switch (field.field_type) {
-            u32 => @field(extra, field.name),
-            i32 => @bitCast(u32, @field(extra, field.name)),
+            u64 => @field(extra, field.name),
+            i64 => @bitCast(u64, @field(extra, field.name)),
             else => @compileError("bad field type"),
         });
     }

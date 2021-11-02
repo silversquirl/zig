@@ -16,7 +16,7 @@ const Register = bits.Register;
 
 instructions: std.MultiArrayList(Inst).Slice,
 /// The meaning of this data is determined by `Inst.Tag` value.
-extra: []const u32,
+extra: []const u64,
 
 pub const Inst = struct {
     tag: Tag,
@@ -141,6 +141,8 @@ pub const Inst = struct {
         lea_scale_dst,
         lea_scale_imm,
 
+        movabs,
+
         /// ops flags: 0bX0:
         /// - Uses the `inst` Data tag as the jump target.
         /// - reg1 and reg2 are ignored.
@@ -218,7 +220,7 @@ pub fn deinit(mir: *Mir, gpa: *std.mem.Allocator) void {
 pub const Ops = struct {
     reg1: Register = .none,
     reg2: Register = .none,
-    flags: u2,
+    flags: u2 = 0b00,
 
     pub fn encode(self: Ops) u16 {
         var ops: u16 = 0;
@@ -239,3 +241,21 @@ pub const Ops = struct {
         };
     }
 };
+
+pub fn extraData(mir: Mir, comptime T: type, index: usize) struct { data: T, end: usize } {
+    const fields = std.meta.fields(T);
+    var i: usize = index;
+    var result: T = undefined;
+    inline for (fields) |field| {
+        @field(result, field.name) = switch (field.field_type) {
+            u64 => mir.extra[i],
+            i64 => @bitCast(i64, mir.extra[i]),
+            else => @compileError("bad field type"),
+        };
+        i += 1;
+    }
+    return .{
+        .data = result,
+        .end = i,
+    };
+}

@@ -48,6 +48,7 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .push => try emit.mirPush(inst),
             .pop => try emit.mirPop(inst),
             .ret => try emit.mirRet(inst),
+            .movabs => try emit.mirMovabs(inst),
             else => {
                 return emit.fail("Implement MIR->Isel lowering for x86_64 for pseudo-inst: {s}", .{tag});
             },
@@ -194,4 +195,26 @@ fn mirSub(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     const tag = emit.mir.instructions.items(.tag)[inst];
     assert(tag == .sub);
     return emit.mirCommonOp(tag, inst);
+}
+
+fn mirMovabs(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .movabs);
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    const payload = emit.mir.instructions.items(.data)[inst].payload;
+    const imm = emit.mir.extraData(struct { imm: u64 }, payload).data.imm;
+    // TODO handle i8
+    const encoder = try Encoder.init(emit.code, 10);
+    encoder.rex(.{
+        .w = ops.reg1.size() == 64,
+        .b = ops.reg1.isExtended(),
+    });
+    encoder.opcode_withReg(0xb8, ops.reg1.lowId());
+    if (imm <= math.maxInt(i16)) {
+        encoder.imm16(@intCast(i16, imm));
+    } else if (imm <= math.maxInt(i32)) {
+        encoder.imm32(@intCast(i32, imm));
+    } else {
+        encoder.imm64(imm);
+    }
 }
