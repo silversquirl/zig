@@ -392,11 +392,19 @@ fn gen(self: *Self) !void {
         _ = try self.addInst(.{
             .tag = .mov,
             .ops = (Mir.Ops{
-                .reg1 = .rsp,
-                .reg2 = .rbp,
+                .reg1 = .rbp,
+                .reg2 = .rsp,
                 .flags = 0b00,
             }).encode(),
             .data = undefined,
+        });
+        _ = try self.addInst(.{
+            .tag = .sub,
+            .ops = (Mir.Ops{
+                .reg1 = .rsp,
+                .flags = 0b00,
+            }).encode(),
+            .data = .{ .imm = 0 },
         });
         // We want to subtract the aligned stack frame size from rsp here, but we don't
         // yet know how big it will be, so we leave room for a 4-byte stack size.
