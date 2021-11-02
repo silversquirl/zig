@@ -153,6 +153,12 @@ pub const Inst = struct {
         ///       0bX0   reg1
         ///       0bX1   [reg1 + imm32]
         push,
+
+        /// ops flags:  form:
+        ///       0bX0   reg1
+        ///       0bX1   [reg1 + imm32]
+        pop,
+
         /// ops flags:  form:
         ///       0b00  retf imm16
         ///       0b01  retf

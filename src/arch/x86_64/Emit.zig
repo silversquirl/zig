@@ -46,6 +46,7 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .mov => try emit.mirMov(inst),
             .sub => try emit.mirSub(inst),
             .push => try emit.mirPush(inst),
+            .pop => try emit.mirPop(inst),
             .ret => try emit.mirRet(inst),
             else => {
                 return emit.fail("Implement MIR->Isel lowering for x86_64 for pseudo-inst: {s}", .{tag});
@@ -61,26 +62,52 @@ fn fail(emit: *Emit, comptime format: []const u8, args: anytype) InnerError {
     return error.EmitFail;
 }
 
-fn mirPush(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
-    const tag = emit.mir.instructions.items(.tag)[inst];
+fn mirPushPop(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
-    assert(tag == .push);
-    const encoder = try Encoder.init(emit.code, 6);
     if (@truncate(u1, ops.flags) == 0b0) {
-        // PUSH reg
-        encoder.opcode_1byte(0x50 | @intCast(u8, ops.reg1.lowId()));
+        // PUSH/POP reg
+        const opc: u8 = switch (tag) {
+            .push => 0x50,
+            .pop => 0x58,
+            else => unreachable,
+        };
+        const encoder = try Encoder.init(emit.code, 1);
+        encoder.opcode_1byte(opc | @intCast(u8, ops.reg1.lowId()));
     } else {
-        // PUSH r/m64
+        // PUSH/POP r/m64
         const imm = emit.mir.instructions.items(.data)[inst].imm;
-        encoder.opcode_1byte(0xff);
+        const opc: u8 = switch (tag) {
+            .push => 0xff,
+            .pop => 0x8f,
+            else => unreachable,
+        };
+        const modrm_ext: u3 = switch (tag) {
+            .push => 0x6,
+            .pop => 0x0,
+            else => unreachable,
+        };
+        const encoder = try Encoder.init(emit.code, 6);
+        encoder.opcode_1byte(opc);
         if (math.cast(i8, imm)) |imm_i8| {
-            encoder.modRm_indirectDisp8(Register.rsi.lowId(), ops.reg1.lowId());
+            encoder.modRm_indirectDisp8(modrm_ext, ops.reg1.lowId());
             encoder.imm8(@intCast(i8, imm_i8));
         } else |_| {
-            encoder.modRm_indirectDisp32(Register.rsi.lowId(), ops.reg1.lowId());
+            encoder.modRm_indirectDisp32(modrm_ext, ops.reg1.lowId());
             encoder.imm32(imm);
         }
     }
+}
+
+fn mirPush(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .push);
+    return emit.mirPushPop(tag, inst);
+}
+
+fn mirPop(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .pop);
+    return emit.mirPushPop(tag, inst);
 }
 
 fn mirRet(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {

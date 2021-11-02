@@ -460,6 +460,14 @@ fn gen(self: *Self) !void {
         });
 
         _ = try self.addInst(.{
+            .tag = .pop,
+            .ops = (Mir.Ops{
+                .reg1 = .rbp,
+                .flags = 0b00,
+            }).encode(),
+            .data = undefined,
+        });
+        _ = try self.addInst(.{
             .tag = .ret,
             .ops = (Mir.Ops{
                 .flags = 0b11,
