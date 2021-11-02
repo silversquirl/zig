@@ -106,68 +106,65 @@ fn mirRet(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     }
 }
 
-fn mirMov(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
-    const tag = emit.mir.instructions.items(.tag)[inst];
+const OpCode = struct {
+    opc: u8,
+    modrm_ext: u3,
+};
+fn getOpCode(tag: Mir.Inst.Tag, ops: Mir.Ops) OpCode {
+    return switch (ops.flags) {
+        0b00 => if (ops.reg2 == .none) switch (tag) {
+            .mov => OpCode{ .opc = 0xc7, .modrm_ext = 0x0 },
+            .sub => OpCode{ .opc = 0x81, .modrm_ext = 0x5 },
+            else => unreachable,
+        } else switch (tag) {
+            .mov => OpCode{ .opc = 0x89, .modrm_ext = ops.reg2.lowId() },
+            .sub => OpCode{ .opc = 0x29, .modrm_ext = ops.reg2.lowId() },
+            else => unreachable,
+        },
+        else => unreachable,
+    };
+}
+
+fn mirCommonOp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
-    assert(tag == .mov);
+    const opcode = getOpCode(tag, ops);
     const encoder = try Encoder.init(emit.code, 15); // TODO reduce from max inst size
     switch (ops.flags) {
         0b00 => blk: {
             if (ops.reg2 == .none) {
                 const imm = emit.mir.instructions.items(.data)[inst].imm;
-                // MOV r/m, imm
+                // OP r/m, imm
                 encoder.rex(.{
                     .w = ops.reg1.size() == 64,
                     .r = ops.reg1.isExtended(),
                 });
-                encoder.opcode_1byte(0xc7);
-                encoder.modRm_direct(0x0, ops.reg1.lowId());
+                encoder.opcode_1byte(opcode.opc);
+                encoder.modRm_direct(opcode.modrm_ext, ops.reg1.lowId());
                 encoder.imm32(imm);
                 break :blk;
             }
 
-            // MOV r/m, r
+            // OP r/m, r
             encoder.rex(.{
                 .w = ops.reg1.size() == 64,
                 .r = ops.reg2.isExtended(),
                 .b = ops.reg1.isExtended(),
             });
-            encoder.opcode_1byte(0x89);
-            encoder.modRm_direct(ops.reg2.lowId(), ops.reg1.lowId());
+            encoder.opcode_1byte(opcode.opc);
+            encoder.modRm_direct(opcode.modrm_ext, ops.reg1.lowId());
         },
-        else => return emit.fail("TODO more MOV alternatives", .{}),
+        else => return emit.fail("TODO more alternatives", .{}),
     }
+}
+
+fn mirMov(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .mov);
+    return emit.mirCommonOp(tag, inst);
 }
 
 fn mirSub(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     const tag = emit.mir.instructions.items(.tag)[inst];
-    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
     assert(tag == .sub);
-    const encoder = try Encoder.init(emit.code, 15); // TODO reduce from max inst size
-    switch (ops.flags) {
-        0b00 => blk: {
-            if (ops.reg2 == .none) {
-                const imm = emit.mir.instructions.items(.data)[inst].imm;
-                // SUB r/m, imm
-                encoder.rex(.{
-                    .w = ops.reg1.size() == 64,
-                    .r = ops.reg1.isExtended(),
-                });
-                encoder.opcode_1byte(0x81);
-                encoder.modRm_direct(0x5, ops.reg1.lowId());
-                encoder.imm32(imm);
-                break :blk;
-            }
-
-            // SUB r/m, r
-            encoder.rex(.{
-                .w = ops.reg1.size() == 64,
-                .r = ops.reg2.isExtended(),
-                .b = ops.reg1.isExtended(),
-            });
-            encoder.opcode_1byte(0x29); // TODO SUB r/m8, r8, different opcode 0x28
-            encoder.modRm_direct(ops.reg2.lowId(), ops.reg1.lowId());
-        },
-        else => return emit.fail("TODO more SUB alternatives", .{}),
-    }
+    return emit.mirCommonOp(tag, inst);
 }
