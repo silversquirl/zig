@@ -33,6 +33,7 @@ pub const Inst = struct {
         ///       0b00  reg1, reg2
         ///       0b00  reg1, imm32
         ///       0b01  reg1, [reg2 + imm32]
+        ///       0b01  reg1, [ds:imm32]
         ///       0b10  [reg1 + imm32], reg2
         ///       0b10  [reg1 + 0], imm32
         ///       0b11  [reg1 + imm32], imm32
@@ -141,6 +142,16 @@ pub const Inst = struct {
         lea_scale_dst,
         lea_scale_imm,
 
+        /// ops flags:  form:
+        ///      0bX0   reg1, imm64
+        ///      0bX1   rax, moffs64
+        /// Notes:
+        ///   * If reg1 is 64-bit, the immediate is 64-bit and stored
+        ///     within extra data `Imm64`.
+        ///   * For 0bX1, reg1 (or reg2) need to be
+        ///     a version of rax. If reg1 == .none, then reg2 == .rax,
+        ///     or vice versa.
+        /// TODO handle scaling
         movabs,
 
         /// ops flags: 0bX0:
@@ -180,6 +191,12 @@ pub const Inst = struct {
 
         /// update debug line
         dbg_line,
+
+        /// Fast system call
+        syscall,
+
+        /// Breakpoint
+        brk,
     };
 
     /// The position of an MIR instruction within the `Mir` instructions array.
@@ -218,7 +235,7 @@ pub const Imm64 = struct {
     pub fn encode(v: u64) Imm64 {
         return .{
             .msb = @truncate(u32, v >> 32),
-            .lsb = @bitCast(i32, @truncate(u32, v)),
+            .lsb = @truncate(u32, v),
         };
     }
 

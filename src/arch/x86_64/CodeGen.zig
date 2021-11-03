@@ -394,7 +394,7 @@ fn gen(self: *Self) InnerError!void {
         // self.code.items.len += 4;
 
         // try self.dbgSetPrologueEnd();
-        // try self.genBody(self.air.getMainBody());
+        try self.genBody(self.air.getMainBody());
 
         // const stack_end = self.max_end_stack;
         // if (stack_end > math.maxInt(i32))
@@ -927,7 +927,7 @@ fn airNot(self: *Self, inst: Air.Inst.Index) !void {
             },
             else => {},
         }
-        break :result try self.genX8664BinMath(inst, ty_op.operand, .bool_true);
+        break :result try self.genBinMathOp(inst, ty_op.operand, .bool_true);
     };
     return self.finishAir(inst, result, .{ ty_op.operand, .none, .none });
 }
@@ -965,7 +965,7 @@ fn airAdd(self: *Self, inst: Air.Inst.Index) !void {
     const result: MCValue = if (self.liveness.isUnused(inst))
         .dead
     else
-        try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs);
+        try self.genBinMathOp(inst, bin_op.lhs, bin_op.rhs);
     return self.finishAir(inst, result, .{ bin_op.lhs, bin_op.rhs, .none });
 }
 
@@ -992,7 +992,7 @@ fn airSub(self: *Self, inst: Air.Inst.Index) !void {
     const result: MCValue = if (self.liveness.isUnused(inst))
         .dead
     else
-        try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs);
+        try self.genBinMathOp(inst, bin_op.lhs, bin_op.rhs);
     return self.finishAir(inst, result, .{ bin_op.lhs, bin_op.rhs, .none });
 }
 
@@ -1019,7 +1019,7 @@ fn airMul(self: *Self, inst: Air.Inst.Index) !void {
     const result: MCValue = if (self.liveness.isUnused(inst))
         .dead
     else
-        try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs);
+        try self.genBinMathOp(inst, bin_op.lhs, bin_op.rhs);
     return self.finishAir(inst, result, .{ bin_op.lhs, bin_op.rhs, .none });
 }
 
@@ -1073,7 +1073,7 @@ fn airBitAnd(self: *Self, inst: Air.Inst.Index) !void {
     const result: MCValue = if (self.liveness.isUnused(inst))
         .dead
     else
-        try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs);
+        try self.genBinMathOp(inst, bin_op.lhs, bin_op.rhs);
     return self.finishAir(inst, result, .{ bin_op.lhs, bin_op.rhs, .none });
 }
 
@@ -1082,7 +1082,7 @@ fn airBitOr(self: *Self, inst: Air.Inst.Index) !void {
     const result: MCValue = if (self.liveness.isUnused(inst))
         .dead
     else
-        try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs);
+        try self.genBinMathOp(inst, bin_op.lhs, bin_op.rhs);
     return self.finishAir(inst, result, .{ bin_op.lhs, bin_op.rhs, .none });
 }
 
@@ -1494,7 +1494,7 @@ fn airStructFieldVal(self: *Self, inst: Air.Inst.Index) !void {
 /// Perform "binary" operators, excluding comparisons.
 /// Currently, the following ops are supported:
 /// ADD, SUB, XOR, OR, AND
-fn genX8664BinMath(self: *Self, inst: Air.Inst.Index, op_lhs: Air.Inst.Ref, op_rhs: Air.Inst.Ref) !MCValue {
+fn genBinMathOp(self: *Self, inst: Air.Inst.Index, op_lhs: Air.Inst.Ref, op_rhs: Air.Inst.Ref) !MCValue {
     // We'll handle these ops in two steps.
     // 1) Prepare an output location (register or memory)
     //    This location will be the location of the operand that dies (if one exists)
@@ -1504,9 +1504,6 @@ fn genX8664BinMath(self: *Self, inst: Air.Inst.Index, op_lhs: Air.Inst.Ref, op_r
     //    In this case, copy that location to a register, then perform the op to that register instead.
     //
     // TODO: make this algorithm less bad
-
-    try self.code.ensureUnusedCapacity(8);
-
     const lhs = try self.resolveInst(op_lhs);
     const rhs = try self.resolveInst(op_rhs);
 
@@ -1565,107 +1562,28 @@ fn genX8664BinMath(self: *Self, inst: Air.Inst.Index, op_lhs: Air.Inst.Ref, op_r
         else => {},
     }
 
-    // Now for step 2, we perform the actual op
-    const inst_ty = self.air.typeOfIndex(inst);
+    // Now for step 2, we assing an MIR instruction
+    const dst_ty = self.air.typeOfIndex(inst);
     const air_tags = self.air.instructions.items(.tag);
     switch (air_tags[inst]) {
-        // TODO: Generate wrapping and non-wrapping versions separately
-        .add, .addwrap => try self.genX8664BinMathCode(inst_ty, dst_mcv, src_mcv, 0, 0x00),
-        .bool_or, .bit_or => try self.genX8664BinMathCode(inst_ty, dst_mcv, src_mcv, 1, 0x08),
-        .bool_and, .bit_and => try self.genX8664BinMathCode(inst_ty, dst_mcv, src_mcv, 4, 0x20),
-        .sub, .subwrap => try self.genX8664BinMathCode(inst_ty, dst_mcv, src_mcv, 5, 0x28),
-        .xor, .not => try self.genX8664BinMathCode(inst_ty, dst_mcv, src_mcv, 6, 0x30),
-
-        .mul, .mulwrap => try self.genX8664Imul(inst_ty, dst_mcv, src_mcv),
+        .add, .addwrap => try self.genBinMathOpMir(.add, dst_ty, dst_mcv, src_mcv),
+        .bool_or, .bit_or => try self.genBinMathOpMir(.@"or", dst_ty, dst_mcv, src_mcv),
+        .bool_and, .bit_and => try self.genBinMathOpMir(.@"and", dst_ty, dst_mcv, src_mcv),
+        .sub, .subwrap => try self.genBinMathOpMir(.sub, dst_ty, dst_mcv, src_mcv),
+        .xor, .not => try self.genBinMathOpMir(.xor, dst_ty, dst_mcv, src_mcv),
+        .mul, .mulwrap => return self.fail("TODO MIR mul", .{}),
         else => unreachable,
     }
 
     return dst_mcv;
 }
 
-/// Wrap over Instruction.encodeInto to translate errors
-fn encodeX8664Instruction(self: *Self, inst: Instruction) !void {
-    inst.encodeInto(self.code) catch |err| {
-        if (err == error.OutOfMemory)
-            return error.OutOfMemory
-        else
-            return self.fail("Instruction.encodeInto failed because {s}", .{@errorName(err)});
-    };
-}
-
-/// This function encodes a binary operation for x86_64
-/// intended for use with the following opcode ranges
-/// because they share the same structure.
-///
-/// Thus not all binary operations can be used here
-/// -- multiplication needs to be done with imul,
-/// which doesn't have as convenient an interface.
-///
-/// "opx"-style instructions use the opcode extension field to indicate which instruction to execute:
-///
-/// opx = /0: add
-/// opx = /1: or
-/// opx = /2: adc
-/// opx = /3: sbb
-/// opx = /4: and
-/// opx = /5: sub
-/// opx = /6: xor
-/// opx = /7: cmp
-///
-/// opcode  | operand shape
-/// --------+----------------------
-/// 80 /opx | *r/m8*,        imm8
-/// 81 /opx | *r/m16/32/64*, imm16/32
-/// 83 /opx | *r/m16/32/64*, imm8
-///
-/// "mr"-style instructions use the low bits of opcode to indicate shape of instruction:
-///
-/// mr = 00: add
-/// mr = 08: or
-/// mr = 10: adc
-/// mr = 18: sbb
-/// mr = 20: and
-/// mr = 28: sub
-/// mr = 30: xor
-/// mr = 38: cmp
-///
-/// opcode | operand shape
-/// -------+-------------------------
-/// mr + 0 | *r/m8*,        r8
-/// mr + 1 | *r/m16/32/64*, r16/32/64
-/// mr + 2 | *r8*,          r/m8
-/// mr + 3 | *r16/32/64*,   r/m16/32/64
-/// mr + 4 | *AL*,          imm8
-/// mr + 5 | *rAX*,         imm16/32
-///
-/// TODO: rotates and shifts share the same structure, so we can potentially implement them
-///       at a later date with very similar code.
-///       They have "opx"-style instructions, but no "mr"-style instructions.
-///
-/// opx = /0: rol,
-/// opx = /1: ror,
-/// opx = /2: rcl,
-/// opx = /3: rcr,
-/// opx = /4: shl sal,
-/// opx = /5: shr,
-/// opx = /6: sal shl,
-/// opx = /7: sar,
-///
-/// opcode  | operand shape
-/// --------+------------------
-/// c0 /opx | *r/m8*,        imm8
-/// c1 /opx | *r/m16/32/64*, imm8
-/// d0 /opx | *r/m8*,        1
-/// d1 /opx | *r/m16/32/64*, 1
-/// d2 /opx | *r/m8*,        CL    (for context, CL is register 1)
-/// d3 /opx | *r/m16/32/64*, CL    (for context, CL is register 1)
-fn genX8664BinMathCode(
+fn genBinMathOpMir(
     self: *Self,
+    mir_tag: Mir.Inst.Tag,
     dst_ty: Type,
     dst_mcv: MCValue,
     src_mcv: MCValue,
-    opx: u3,
-    mr: u8,
 ) !void {
     switch (dst_mcv) {
         .none => unreachable,
@@ -1683,84 +1601,42 @@ fn genX8664BinMathCode(
                 .ptr_stack_offset => unreachable,
                 .ptr_embedded_in_code => unreachable,
                 .register => |src_reg| {
-                    // for register, register use mr + 1
-                    // addressing mode: *r/m16/32/64*, r16/32/64
-                    const abi_size = dst_ty.abiSize(self.target.*);
-                    const encoder = try Encoder.init(self.code, 3);
-                    encoder.rex(.{
-                        .w = abi_size == 8,
-                        .r = src_reg.isExtended(),
-                        .b = dst_reg.isExtended(),
+                    _ = try self.addInst(.{
+                        .tag = mir_tag,
+                        .ops = (Mir.Ops{
+                            .reg1 = src_reg,
+                            .reg2 = dst_reg,
+                        }).encode(),
+                        .data = undefined,
                     });
-                    encoder.opcode_1byte(mr + 1);
-                    encoder.modRm_direct(
-                        src_reg.lowId(),
-                        dst_reg.lowId(),
-                    );
                 },
                 .immediate => |imm| {
-                    // register, immediate use opx = 81 or 83 addressing modes:
-                    // opx = 81: r/m16/32/64, imm16/32
-                    // opx = 83: r/m16/32/64, imm8
-                    const imm32 = @intCast(i32, imm); // This case must be handled before calling genX8664BinMathCode.
-                    if (imm32 <= math.maxInt(i8)) {
-                        const abi_size = dst_ty.abiSize(self.target.*);
-                        const encoder = try Encoder.init(self.code, 4);
-                        encoder.rex(.{
-                            .w = abi_size == 8,
-                            .b = dst_reg.isExtended(),
-                        });
-                        encoder.opcode_1byte(0x83);
-                        encoder.modRm_direct(
-                            opx,
-                            dst_reg.lowId(),
-                        );
-                        encoder.imm8(@intCast(i8, imm32));
-                    } else {
-                        const abi_size = dst_ty.abiSize(self.target.*);
-                        const encoder = try Encoder.init(self.code, 7);
-                        encoder.rex(.{
-                            .w = abi_size == 8,
-                            .b = dst_reg.isExtended(),
-                        });
-                        encoder.opcode_1byte(0x81);
-                        encoder.modRm_direct(
-                            opx,
-                            dst_reg.lowId(),
-                        );
-                        encoder.imm32(@intCast(i32, imm32));
-                    }
+                    _ = try self.addInst(.{
+                        .tag = mir_tag,
+                        .ops = (Mir.Ops{
+                            .reg1 = dst_reg,
+                        }).encode(),
+                        .data = .{ .imm = @intCast(i32, imm) },
+                    });
                 },
                 .embedded_in_code, .memory => {
                     return self.fail("TODO implement x86 ADD/SUB/CMP source memory", .{});
                 },
                 .stack_offset => |off| {
-                    // register, indirect use mr + 3
-                    // addressing mode: *r16/32/64*, r/m16/32/64
-                    const abi_size = dst_ty.abiSize(self.target.*);
-                    const adj_off = off + abi_size;
                     if (off > math.maxInt(i32)) {
                         return self.fail("stack offset too large", .{});
                     }
-                    const encoder = try Encoder.init(self.code, 7);
-                    encoder.rex(.{
-                        .w = abi_size == 8,
-                        .r = dst_reg.isExtended(),
+                    const abi_size = dst_ty.abiSize(self.target.*);
+                    const adj_off = off + abi_size;
+                    _ = try self.addInst(.{
+                        .tag = mir_tag,
+                        .ops = (Mir.Ops{
+                            .reg1 = dst_reg,
+                            .reg2 = .ebp,
+                            .flags = 0b01,
+                        }).encode(),
+                        .data = .{ .imm = -@intCast(i32, adj_off) },
                     });
-                    encoder.opcode_1byte(mr + 3);
-                    if (adj_off <= std.math.maxInt(i8)) {
-                        encoder.modRm_indirectDisp8(
-                            dst_reg.lowId(),
-                            Register.ebp.lowId(),
-                        );
-                        encoder.disp8(-@intCast(i8, adj_off));
-                    } else {
-                        encoder.modRm_indirectDisp32(
-                            dst_reg.lowId(),
-                            Register.ebp.lowId(),
-                        );
-                        encoder.disp32(-@intCast(i32, adj_off));
-                    }
                 },
                 .compare_flags_unsigned => {
                     return self.fail("TODO implement x86 ADD/SUB/CMP source compare flag (unsigned)", .{});
@@ -1778,7 +1654,20 @@ fn genX8664BinMathCode(
                 .ptr_stack_offset => unreachable,
                 .ptr_embedded_in_code => unreachable,
                 .register => |src_reg| {
-                    try self.genX8664ModRMRegToStack(dst_ty, off, src_reg, mr + 0x1);
+                    if (off > math.maxInt(i32)) {
+                        return self.fail("stack offset too large", .{});
+                    }
+                    const abi_size = dst_ty.abiSize(self.target.*);
+                    const adj_off = off + abi_size;
+                    _ = try self.addInst(.{
+                        .tag = mir_tag,
+                        .ops = (Mir.Ops{
+                            .reg1 = src_reg,
+                            .reg2 = .ebp,
+                            .flags = 0b10,
+                        }).encode(),
+                        .data = .{ .imm = -@intCast(i32, adj_off) },
+                    });
                 },
                 .immediate => |imm| {
                     _ = imm;
@@ -1950,37 +1839,6 @@ fn genX8664Imul(
     }
 }
 
-fn genX8664ModRMRegToStack(self: *Self, ty: Type, off: u32, reg: Register, opcode: u8) !void {
-    const abi_size = ty.abiSize(self.target.*);
-    const adj_off = off + abi_size;
-    if (off > math.maxInt(i32)) {
-        return self.fail("stack offset too large", .{});
-    }
-
-    const i_adj_off = -@intCast(i32, adj_off);
-    const encoder = try Encoder.init(self.code, 7);
-    encoder.rex(.{
-        .w = abi_size == 8,
-        .r = reg.isExtended(),
-    });
-    encoder.opcode_1byte(opcode);
-    if (i_adj_off < std.math.maxInt(i8)) {
-        // example: 48 89 55 7f           mov    QWORD PTR [rbp+0x7f],rdx
-        encoder.modRm_indirectDisp8(
-            reg.lowId(),
-            Register.ebp.lowId(),
-        );
-        encoder.disp8(@intCast(i8, i_adj_off));
-    } else {
-        // example: 48 89 95 80 00 00 00  mov    QWORD PTR [rbp+0x80],rdx
-        encoder.modRm_indirectDisp32(
-            reg.lowId(),
-            Register.ebp.lowId(),
-        );
-        encoder.disp32(i_adj_off);
-    }
-}
-
 fn genArgDbgInfo(self: *Self, inst: Air.Inst.Index, mcv: MCValue) !void {
     const ty_str = self.air.instructions.items(.data)[inst].ty_str;
     const zir = &self.mod_fn.owner_decl.getFileScope().zir;
@@ -2025,7 +1883,7 @@ fn airArg(self: *Self, inst: Air.Inst.Index) !void {
     _ = ty;
 
     const mcv = self.args[arg_index];
-    try self.genArgDbgInfo(inst, mcv);
+    // try self.genArgDbgInfo(inst, mcv);
 
     if (self.liveness.isUnused(inst))
         return self.finishAirBookkeeping();
@@ -2041,7 +1899,11 @@ fn airArg(self: *Self, inst: Air.Inst.Index) !void {
 }
 
 fn airBreakpoint(self: *Self) !void {
-    try self.code.append(0xcc); // int3
+    _ = try self.addInst(.{
+        .tag = .brk,
+        .ops = undefined,
+        .data = undefined,
+    });
     return self.finishAirBookkeeping();
 }
 
@@ -2100,21 +1962,23 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
         if (self.air.value(callee)) |func_value| {
             if (func_value.castTag(.function)) |func_payload| {
                 const func = func_payload.data;
+                _ = func;
+                return self.fail("TODO implement calling functions", .{});
 
-                const ptr_bits = self.target.cpu.arch.ptrBitWidth();
-                const ptr_bytes: u64 = @divExact(ptr_bits, 8);
-                const got_addr = if (self.bin_file.cast(link.File.Elf)) |elf_file| blk: {
-                    const got = &elf_file.program_headers.items[elf_file.phdr_got_index.?];
-                    break :blk @intCast(u32, got.p_vaddr + func.owner_decl.link.elf.offset_table_index * ptr_bytes);
-                } else if (self.bin_file.cast(link.File.Coff)) |coff_file|
-                    @intCast(u32, coff_file.offset_table_virtual_address + func.owner_decl.link.coff.offset_table_index * ptr_bytes)
-                else
-                    unreachable;
+                // const ptr_bits = self.target.cpu.arch.ptrBitWidth();
+                // const ptr_bytes: u64 = @divExact(ptr_bits, 8);
+                // const got_addr = if (self.bin_file.cast(link.File.Elf)) |elf_file| blk: {
+                //     const got = &elf_file.program_headers.items[elf_file.phdr_got_index.?];
+                //     break :blk @intCast(u32, got.p_vaddr + func.owner_decl.link.elf.offset_table_index * ptr_bytes);
+                // } else if (self.bin_file.cast(link.File.Coff)) |coff_file|
+                //     @intCast(u32, coff_file.offset_table_virtual_address + func.owner_decl.link.coff.offset_table_index * ptr_bytes)
+                // else
+                //     unreachable;
 
-                // ff 14 25 xx xx xx xx    call [addr]
-                try self.code.ensureUnusedCapacity(7);
-                self.code.appendSliceAssumeCapacity(&[3]u8{ 0xff, 0x14, 0x25 });
-                mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), got_addr);
+                // // ff 14 25 xx xx xx xx    call [addr]
+                // try self.code.ensureUnusedCapacity(7);
+                // self.code.appendSliceAssumeCapacity(&[3]u8{ 0xff, 0x14, 0x25 });
+                // mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), got_addr);
             } else if (func_value.castTag(.extern_fn)) |_| {
                 return self.fail("TODO implement calling extern functions", .{});
             } else {
@@ -2124,6 +1988,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
             return self.fail("TODO implement calling runtime known function pointer", .{});
         }
     } else if (self.bin_file.cast(link.File.MachO)) |macho_file| {
+        _ = macho_file;
         for (info.args) |mc_arg, arg_i| {
             const arg = args[arg_i];
             const arg_ty = self.air.typeOf(arg);
@@ -2162,33 +2027,37 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
         if (self.air.value(callee)) |func_value| {
             if (func_value.castTag(.function)) |func_payload| {
                 const func = func_payload.data;
-                // TODO I'm hacking my way through here by repurposing .memory for storing
-                // index to the GOT target symbol index.
-                try self.genSetReg(Type.initTag(.u64), .rax, .{
-                    .memory = func.owner_decl.link.macho.local_sym_index,
-                });
-                // callq *%rax
-                try self.code.ensureUnusedCapacity(2);
-                self.code.appendSliceAssumeCapacity(&[2]u8{ 0xff, 0xd0 });
+                _ = func;
+                return self.fail("TODO implement calling functions", .{});
+                // // TODO I'm hacking my way through here by repurposing .memory for storing
+                // // index to the GOT target symbol index.
+                // try self.genSetReg(Type.initTag(.u64), .rax, .{
+                //     .memory = func.owner_decl.link.macho.local_sym_index,
+                // });
+                // // callq *%rax
+                // try self.code.ensureUnusedCapacity(2);
+                // self.code.appendSliceAssumeCapacity(&[2]u8{ 0xff, 0xd0 });
             } else if (func_value.castTag(.extern_fn)) |func_payload| {
                 const decl = func_payload.data;
-                const n_strx = try macho_file.addExternFn(mem.spanZ(decl.name));
-                const offset = blk: {
-                    // callq
-                    try self.code.ensureUnusedCapacity(5);
-                    self.code.appendSliceAssumeCapacity(&[5]u8{ 0xe8, 0x0, 0x0, 0x0, 0x0 });
-                    break :blk @intCast(u32, self.code.items.len) - 4;
-                };
-                // Add relocation to the decl.
-                try macho_file.active_decl.?.link.macho.relocs.append(self.bin_file.allocator, .{
-                    .offset = offset,
-                    .target = .{ .global = n_strx },
-                    .addend = 0,
-                    .subtractor = null,
-                    .pcrel = true,
-                    .length = 2,
-                    .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_BRANCH),
-                });
+                _ = decl;
+                return self.fail("TODO implement calling extern functions", .{});
+                // const n_strx = try macho_file.addExternFn(mem.spanZ(decl.name));
+                // const offset = blk: {
+                //     // callq
+                //     try self.code.ensureUnusedCapacity(5);
+                //     self.code.appendSliceAssumeCapacity(&[5]u8{ 0xe8, 0x0, 0x0, 0x0, 0x0 });
+                //     break :blk @intCast(u32, self.code.items.len) - 4;
+                // };
+                // // Add relocation to the decl.
+                // try macho_file.active_decl.?.link.macho.relocs.append(self.bin_file.allocator, .{
+                //     .offset = offset,
+                //     .target = .{ .global = n_strx },
+                //     .addend = 0,
+                //     .subtractor = null,
+                //     .pcrel = true,
+                //     .length = 2,
+                //     .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_BRANCH),
+                // });
             } else {
                 return self.fail("TODO implement calling bitcasted functions", .{});
             }
@@ -2196,6 +2065,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
             return self.fail("TODO implement calling runtime known function pointer", .{});
         }
     } else if (self.bin_file.cast(link.File.Plan9)) |p9| {
+        _ = p9;
         for (info.args) |mc_arg, arg_i| {
             const arg = args[arg_i];
             const arg_ty = self.air.typeOf(arg);
@@ -2231,16 +2101,18 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
         }
         if (self.air.value(callee)) |func_value| {
             if (func_value.castTag(.function)) |func_payload| {
-                try p9.seeDecl(func_payload.data.owner_decl);
-                const ptr_bits = self.target.cpu.arch.ptrBitWidth();
-                const ptr_bytes: u64 = @divExact(ptr_bits, 8);
-                const got_addr = p9.bases.data;
-                const got_index = func_payload.data.owner_decl.link.plan9.got_index.?;
-                // ff 14 25 xx xx xx xx    call [addr]
-                try self.code.ensureUnusedCapacity(7);
-                self.code.appendSliceAssumeCapacity(&[3]u8{ 0xff, 0x14, 0x25 });
-                const fn_got_addr = got_addr + got_index * ptr_bytes;
-                mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), @intCast(u32, fn_got_addr));
+                _ = func_payload;
+                return self.fail("TODO implement calling functions", .{});
+                // try p9.seeDecl(func_payload.data.owner_decl);
+                // const ptr_bits = self.target.cpu.arch.ptrBitWidth();
+                // const ptr_bytes: u64 = @divExact(ptr_bits, 8);
+                // const got_addr = p9.bases.data;
+                // const got_index = func_payload.data.owner_decl.link.plan9.got_index.?;
+                // // ff 14 25 xx xx xx xx    call [addr]
+                // try self.code.ensureUnusedCapacity(7);
+                // self.code.appendSliceAssumeCapacity(&[3]u8{ 0xff, 0x14, 0x25 });
+                // const fn_got_addr = got_addr + got_index * ptr_bytes;
+                // mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), @intCast(u32, fn_got_addr));
             } else return self.fail("TODO implement calling extern fn on plan9", .{});
         } else {
             return self.fail("TODO implement calling runtime known function pointer", .{});
@@ -2280,9 +2152,9 @@ fn ret(self: *Self, mcv: MCValue) !void {
     // TODO when implementing defer, this will need to jump to the appropriate defer expression.
     // TODO optimization opportunity: figure out when we can emit this as a 2 byte instruction
     // which is available if the jump is 127 bytes or less forward.
-    try self.code.resize(self.code.items.len + 5);
-    self.code.items[self.code.items.len - 5] = 0xe9; // jmp rel32
-    try self.exitlude_jump_relocs.append(self.gpa, self.code.items.len - 4);
+    // try self.code.resize(self.code.items.len + 5);
+    // self.code.items[self.code.items.len - 5] = 0xe9; // jmp rel32
+    // try self.exitlude_jump_relocs.append(self.gpa, self.code.items.len - 4);
 }
 
 fn airRet(self: *Self, inst: Air.Inst.Index) !void {
@@ -2312,8 +2184,6 @@ fn airCmp(self: *Self, inst: Air.Inst.Index, op: math.CompareOperator) !void {
     const lhs = try self.resolveInst(bin_op.lhs);
     const rhs = try self.resolveInst(bin_op.rhs);
     const result: MCValue = result: {
-        try self.code.ensureUnusedCapacity(8);
-
         // There are 2 operands, destination and source.
         // Either one, but not both, can be a memory operand.
         // Source operand can be an immediate, 8 bits or 32 bits.
@@ -2324,7 +2194,7 @@ fn airCmp(self: *Self, inst: Air.Inst.Index, op: math.CompareOperator) !void {
         // This instruction supports only signed 32-bit immediates at most.
         const src_mcv = try self.limitImmediateType(bin_op.rhs, i32);
 
-        try self.genX8664BinMathCode(Type.initTag(.bool), dst_mcv, src_mcv, 7, 0x38);
+        try self.genBinMathOpMir(.cmp, Type.initTag(.bool), dst_mcv, src_mcv);
         break :result switch (ty.isSignedInt()) {
             true => MCValue{ .compare_flags_signed = op },
             false => MCValue{ .compare_flags_unsigned = op },
@@ -2335,7 +2205,8 @@ fn airCmp(self: *Self, inst: Air.Inst.Index, op: math.CompareOperator) !void {
 
 fn airDbgStmt(self: *Self, inst: Air.Inst.Index) !void {
     const dbg_stmt = self.air.instructions.items(.data)[inst].dbg_stmt;
-    try self.dbgAdvancePCAndLine(dbg_stmt.line, dbg_stmt.column);
+    _ = dbg_stmt;
+    // try self.dbgAdvancePCAndLine(dbg_stmt.line, dbg_stmt.column);
     return self.finishAirBookkeeping();
 }
 
@@ -2347,59 +2218,62 @@ fn airCondBr(self: *Self, inst: Air.Inst.Index) !void {
     const else_body = self.air.extra[extra.end + then_body.len ..][0..extra.data.else_body_len];
     const liveness_condbr = self.liveness.getCondBr(inst);
 
-    const reloc: Reloc = reloc: {
-        try self.code.ensureUnusedCapacity(6);
+    const reloc = Reloc{ .rel32 = 0 };
+    _ = cond;
+    // TODO MIR
+    // const reloc: Reloc = reloc: {
+    //     try self.code.ensureUnusedCapacity(6);
 
-        const opcode: u8 = switch (cond) {
-            .compare_flags_signed => |cmp_op| blk: {
-                // Here we map to the opposite opcode because the jump is to the false branch.
-                const opcode: u8 = switch (cmp_op) {
-                    .gte => 0x8c,
-                    .gt => 0x8e,
-                    .neq => 0x84,
-                    .lt => 0x8d,
-                    .lte => 0x8f,
-                    .eq => 0x85,
-                };
-                break :blk opcode;
-            },
-            .compare_flags_unsigned => |cmp_op| blk: {
-                // Here we map to the opposite opcode because the jump is to the false branch.
-                const opcode: u8 = switch (cmp_op) {
-                    .gte => 0x82,
-                    .gt => 0x86,
-                    .neq => 0x84,
-                    .lt => 0x83,
-                    .lte => 0x87,
-                    .eq => 0x85,
-                };
-                break :blk opcode;
-            },
-            .register => |reg| blk: {
-                // test reg, 1
-                // TODO detect al, ax, eax
-                const encoder = try Encoder.init(self.code, 4);
-                encoder.rex(.{
-                    // TODO audit this codegen: we force w = true here to make
-                    // the value affect the big register
-                    .w = true,
-                    .b = reg.isExtended(),
-                });
-                encoder.opcode_1byte(0xf6);
-                encoder.modRm_direct(
-                    0,
-                    reg.lowId(),
-                );
-                encoder.disp8(1);
-                break :blk 0x84;
-            },
-            else => return self.fail("TODO implement condbr {s} when condition is {s}", .{ self.target.cpu.arch, @tagName(cond) }),
-        };
-        self.code.appendSliceAssumeCapacity(&[_]u8{ 0x0f, opcode });
-        const reloc = Reloc{ .rel32 = self.code.items.len };
-        self.code.items.len += 4;
-        break :reloc reloc;
-    };
+    //     const opcode: u8 = switch (cond) {
+    //         .compare_flags_signed => |cmp_op| blk: {
+    //             // Here we map to the opposite opcode because the jump is to the false branch.
+    //             const opcode: u8 = switch (cmp_op) {
+    //                 .gte => 0x8c,
+    //                 .gt => 0x8e,
+    //                 .neq => 0x84,
+    //                 .lt => 0x8d,
+    //                 .lte => 0x8f,
+    //                 .eq => 0x85,
+    //             };
+    //             break :blk opcode;
+    //         },
+    //         .compare_flags_unsigned => |cmp_op| blk: {
+    //             // Here we map to the opposite opcode because the jump is to the false branch.
+    //             const opcode: u8 = switch (cmp_op) {
+    //                 .gte => 0x82,
+    //                 .gt => 0x86,
+    //                 .neq => 0x84,
+    //                 .lt => 0x83,
+    //                 .lte => 0x87,
+    //                 .eq => 0x85,
+    //             };
+    //             break :blk opcode;
+    //         },
+    //         .register => |reg| blk: {
+    //             // test reg, 1
+    //             // TODO detect al, ax, eax
+    //             const encoder = try Encoder.init(self.code, 4);
+    //             encoder.rex(.{
+    //                 // TODO audit this codegen: we force w = true here to make
+    //                 // the value affect the big register
+    //                 .w = true,
+    //                 .b = reg.isExtended(),
+    //             });
+    //             encoder.opcode_1byte(0xf6);
+    //             encoder.modRm_direct(
+    //                 0,
+    //                 reg.lowId(),
+    //             );
+    //             encoder.disp8(1);
+    //             break :blk 0x84;
+    //         },
+    //         else => return self.fail("TODO implement condbr {s} when condition is {s}", .{ self.target.cpu.arch, @tagName(cond) }),
+    //     };
+    //     self.code.appendSliceAssumeCapacity(&[_]u8{ 0x0f, opcode });
+    //     const reloc = Reloc{ .rel32 = self.code.items.len };
+    //     self.code.items.len += 4;
+    //     break :reloc reloc;
+    // };
 
     // Capture the state of register and stack allocation state so that we can revert to it.
     const parent_next_stack_offset = self.next_stack_offset;
@@ -2657,10 +2531,12 @@ fn airLoop(self: *Self, inst: Air.Inst.Index) !void {
     const ty_pl = self.air.instructions.items(.data)[inst].ty_pl;
     const loop = self.air.extraData(Air.Block, ty_pl.payload);
     const body = self.air.extra[loop.end..][0..loop.data.body_len];
-    const start_index = self.code.items.len;
-    try self.genBody(body);
-    try self.jump(start_index);
-    return self.finishAirBookkeeping();
+    _ = body;
+    return self.fail("TODO airLoop", .{});
+    // const start_index = self.code.items.len;
+    // try self.genBody(body);
+    // try self.jump(start_index);
+    // return self.finishAirBookkeeping();
 }
 
 /// Send control flow to the `index` of `self.code`.
@@ -2710,21 +2586,24 @@ fn airSwitch(self: *Self, inst: Air.Inst.Index) !void {
 }
 
 fn performReloc(self: *Self, reloc: Reloc) !void {
-    switch (reloc) {
-        .rel32 => |pos| {
-            const amt = self.code.items.len - (pos + 4);
-            // Here it would be tempting to implement testing for amt == 0 and then elide the
-            // jump. However, that will cause a problem because other jumps may assume that they
-            // can jump to this code. Or maybe I didn't understand something when I was debugging.
-            // It could be worth another look. Anyway, that's why that isn't done here. Probably the
-            // best place to elide jumps will be in semantic analysis, by inlining blocks that only
-            // only have 1 break instruction.
-            const s32_amt = math.cast(i32, amt) catch
-                return self.fail("unable to perform relocation: jump too far", .{});
-            mem.writeIntLittle(i32, self.code.items[pos..][0..4], s32_amt);
-        },
-        .arm_branch => unreachable,
-    }
+    _ = self;
+    _ = reloc;
+    // TODO perform reloc
+    // switch (reloc) {
+    //     .rel32 => |pos| {
+    //         const amt = self.code.items.len - (pos + 4);
+    //         // Here it would be tempting to implement testing for amt == 0 and then elide the
+    //         // jump. However, that will cause a problem because other jumps may assume that they
+    //         // can jump to this code. Or maybe I didn't understand something when I was debugging.
+    //         // It could be worth another look. Anyway, that's why that isn't done here. Probably the
+    //         // best place to elide jumps will be in semantic analysis, by inlining blocks that only
+    //         // only have 1 break instruction.
+    //         const s32_amt = math.cast(i32, amt) catch
+    //             return self.fail("unable to perform relocation: jump too far", .{});
+    //         mem.writeIntLittle(i32, self.code.items[pos..][0..4], s32_amt);
+    //     },
+    //     .arm_branch => unreachable,
+    // }
 }
 
 fn airBr(self: *Self, inst: Air.Inst.Index) !void {
@@ -2740,9 +2619,9 @@ fn airBoolOp(self: *Self, inst: Air.Inst.Index) !void {
         .dead
     else switch (air_tags[inst]) {
         // lhs AND rhs
-        .bool_and => try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs),
+        .bool_and => try self.genBinMathOp(inst, bin_op.lhs, bin_op.rhs),
         // lhs OR rhs
-        .bool_or => try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs),
+        .bool_or => try self.genBinMathOp(inst, bin_op.lhs, bin_op.rhs),
         else => unreachable, // Not a boolean operation
     };
     return self.finishAir(inst, result, .{ bin_op.lhs, bin_op.rhs, .none });
@@ -2765,14 +2644,16 @@ fn br(self: *Self, block: Air.Inst.Index, operand: Air.Inst.Ref) !void {
 
 fn brVoid(self: *Self, block: Air.Inst.Index) !void {
     const block_data = self.blocks.getPtr(block).?;
-    // Emit a jump with a relocation. It will be patched up after the block ends.
-    try block_data.relocs.ensureUnusedCapacity(self.gpa, 1);
-    // TODO optimization opportunity: figure out when we can emit this as a 2 byte instruction
-    // which is available if the jump is 127 bytes or less forward.
-    try self.code.resize(self.code.items.len + 5);
-    self.code.items[self.code.items.len - 5] = 0xe9; // jmp rel32
-    // Leave the jump offset undefined
-    block_data.relocs.appendAssumeCapacity(.{ .rel32 = self.code.items.len - 4 });
+    _ = block_data;
+    // TODO MIR
+    // // Emit a jump with a relocation. It will be patched up after the block ends.
+    // try block_data.relocs.ensureUnusedCapacity(self.gpa, 1);
+    // // TODO optimization opportunity: figure out when we can emit this as a 2 byte instruction
+    // // which is available if the jump is 127 bytes or less forward.
+    // try self.code.resize(self.code.items.len + 5);
+    // self.code.items[self.code.items.len - 5] = 0xe9; // jmp rel32
+    // // Leave the jump offset undefined
+    // block_data.relocs.appendAssumeCapacity(.{ .rel32 = self.code.items.len - 4 });
 }
 
 fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
@@ -2829,22 +2710,30 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
             var iter = std.mem.tokenize(u8, asm_source, "\n\r");
             while (iter.next()) |ins| {
                 if (mem.eql(u8, ins, "syscall")) {
-                    try self.code.appendSlice(&[_]u8{ 0x0f, 0x05 });
+                    _ = try self.addInst(.{
+                        .tag = .syscall,
+                        .ops = undefined,
+                        .data = undefined,
+                    });
                 } else if (mem.indexOf(u8, ins, "push")) |_| {
                     const arg = ins[4..];
                     if (mem.indexOf(u8, arg, "$")) |l| {
-                        const n = std.fmt.parseInt(u8, ins[4 + l + 1 ..], 10) catch return self.fail("TODO implement more inline asm int parsing", .{});
-                        try self.code.appendSlice(&.{ 0x6a, n });
+                        const n = std.fmt.parseInt(u8, ins[4 + l + 1 ..], 10) catch {
+                            return self.fail("TODO implement more inline asm int parsing", .{});
+                        };
+                        _ = n;
+                        return self.fail("TODO MIR push imm", .{});
                     } else if (mem.indexOf(u8, arg, "%%")) |l| {
                         const reg_name = ins[4 + l + 2 ..];
                         const reg = parseRegName(reg_name) orelse
                             return self.fail("unrecognized register: '{s}'", .{reg_name});
-                        const low_id: u8 = reg.lowId();
-                        if (reg.isExtended()) {
-                            try self.code.appendSlice(&.{ 0x41, 0b1010000 | low_id });
-                        } else {
-                            try self.code.append(0b1010000 | low_id);
-                        }
+                        _ = try self.addInst(.{
+                            .tag = .push,
+                            .ops = (Mir.Ops{
+                                .reg1 = reg,
+                            }).encode(),
+                            .data = undefined,
+                        });
                     } else return self.fail("TODO more push operands", .{});
                 } else if (mem.indexOf(u8, ins, "pop")) |_| {
                     const arg = ins[3..];
@@ -2852,12 +2741,13 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
                         const reg_name = ins[3 + l + 2 ..];
                         const reg = parseRegName(reg_name) orelse
                             return self.fail("unrecognized register: '{s}'", .{reg_name});
-                        const low_id: u8 = reg.lowId();
-                        if (reg.isExtended()) {
-                            try self.code.appendSlice(&.{ 0x41, 0b1011000 | low_id });
-                        } else {
-                            try self.code.append(0b1011000 | low_id);
-                        }
+                        _ = try self.addInst(.{
+                            .tag = .pop,
+                            .ops = (Mir.Ops{
+                                .reg1 = reg,
+                            }).encode(),
+                            .data = undefined,
+                        });
                     } else return self.fail("TODO more pop operands", .{});
                 } else {
                     return self.fail("TODO implement support for more x86 assembly instructions", .{});
@@ -2949,7 +2839,6 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: u32, mcv: MCValue) InnerErro
             if (adj_off > 128) {
                 return self.fail("TODO implement set stack variable with large stack offset", .{});
             }
-            try self.code.ensureUnusedCapacity(8);
             switch (abi_size) {
                 1 => {
                     return self.fail("TODO implement set abi_size=1 stack variable with immediate", .{});
@@ -2964,8 +2853,18 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: u32, mcv: MCValue) InnerErro
                     const negative_offset = @intCast(i8, -@intCast(i32, adj_off));
                     const twos_comp = @bitCast(u8, negative_offset);
                     // mov    DWORD PTR [rbp+offset], immediate
-                    self.code.appendSliceAssumeCapacity(&[_]u8{ 0xc7, 0x45, twos_comp });
-                    mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), x);
+                    const payload = try self.addExtra(Mir.ImmPair{
+                        .dest_off = twos_comp,
+                        .operand = @bitCast(i32, x),
+                    });
+                    _ = try self.addInst(.{
+                        .tag = .mov,
+                        .ops = (Mir.Ops{
+                            .reg1 = .rbp,
+                            .flags = 0b11,
+                        }).encode(),
+                        .data = .{ .payload = payload },
+                    });
                 },
                 8 => {
                     // We have a positive stack offset value but we want a twos complement negative
@@ -2975,17 +2874,34 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: u32, mcv: MCValue) InnerErro
 
                     // 64 bit write to memory would take two mov's anyways so we
                     // insted just use two 32 bit writes to avoid register allocation
-                    try self.code.ensureUnusedCapacity(14);
-                    var buf: [8]u8 = undefined;
-                    mem.writeIntLittle(u64, &buf, x_big);
-
-                    // mov    DWORD PTR [rbp+offset+4], immediate
-                    self.code.appendSliceAssumeCapacity(&[_]u8{ 0xc7, 0x45, twos_comp + 4 });
-                    self.code.appendSliceAssumeCapacity(buf[4..8]);
-
-                    // mov    DWORD PTR [rbp+offset], immediate
-                    self.code.appendSliceAssumeCapacity(&[_]u8{ 0xc7, 0x45, twos_comp });
-                    self.code.appendSliceAssumeCapacity(buf[0..4]);
+                    {
+                        const payload = try self.addExtra(Mir.ImmPair{
+                            .dest_off = twos_comp + 4,
+                            .operand = @bitCast(i32, @truncate(u32, x_big >> 32)),
+                        });
+                        _ = try self.addInst(.{
+                            .tag = .mov,
+                            .ops = (Mir.Ops{
+                                .reg1 = .rbp,
+                                .flags = 0b11,
+                            }).encode(),
+                            .data = .{ .payload = payload },
+                        });
+                    }
+                    {
+                        const payload = try self.addExtra(Mir.ImmPair{
+                            .dest_off = twos_comp,
+                            .operand = @bitCast(i32, @truncate(u32, x_big)),
+                        });
+                        _ = try self.addInst(.{
+                            .tag = .mov,
+                            .ops = (Mir.Ops{
+                                .reg1 = .rbp,
+                                .flags = 0b11,
+                            }).encode(),
+                            .data = .{ .payload = payload },
+                        });
+                    }
                 },
                 else => {
                     return self.fail("TODO implement set abi_size=large stack variable with immediate", .{});
@@ -2999,7 +2915,20 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: u32, mcv: MCValue) InnerErro
             return self.genSetStack(ty, stack_offset, MCValue{ .register = reg });
         },
         .register => |reg| {
-            try self.genX8664ModRMRegToStack(ty, stack_offset, reg, 0x89);
+            if (stack_offset > math.maxInt(i32)) {
+                return self.fail("stack offset too large", .{});
+            }
+            const abi_size = ty.abiSize(self.target.*);
+            const adj_off = stack_offset + abi_size;
+            _ = try self.addInst(.{
+                .tag = .mov,
+                .ops = (Mir.Ops{
+                    .reg1 = reg,
+                    .reg2 = .ebp,
+                    .flags = 0b10,
+                }).encode(),
+                .data = .{ .imm = -@intCast(i32, adj_off) },
+            });
         },
         .memory => |vaddr| {
             _ = vaddr;
@@ -3037,25 +2966,27 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             }
         },
         .compare_flags_unsigned => |op| {
-            const encoder = try Encoder.init(self.code, 7);
-            // TODO audit this codegen: we force w = true here to make
-            // the value affect the big register
-            encoder.rex(.{
-                .w = true,
-                .b = reg.isExtended(),
-            });
-            encoder.opcode_2byte(0x0f, switch (op) {
-                .gte => 0x93,
-                .gt => 0x97,
-                .neq => 0x95,
-                .lt => 0x92,
-                .lte => 0x96,
-                .eq => 0x94,
-            });
-            encoder.modRm_direct(
-                0,
-                reg.lowId(),
-            );
+            _ = op;
+            return self.fail("TODO set register with compare flags value (unsigned)", .{});
+            // const encoder = try Encoder.init(self.code, 7);
+            // // TODO audit this codegen: we force w = true here to make
+            // // the value affect the big register
+            // encoder.rex(.{
+            //     .w = true,
+            //     .b = reg.isExtended(),
+            // });
+            // encoder.opcode_2byte(0x0f, switch (op) {
+            //     .gte => 0x93,
+            //     .gt => 0x97,
+            //     .neq => 0x95,
+            //     .lt => 0x92,
+            //     .lte => 0x96,
+            //     .eq => 0x94,
+            // });
+            // encoder.modRm_direct(
+            //     0,
+            //     reg.lowId(),
+            // );
         },
         .compare_flags_signed => |op| {
             _ = op;
@@ -3065,44 +2996,25 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             // 32-bit moves zero-extend to 64-bit, so xoring the 32-bit
             // register is the fastest way to zero a register.
             if (x == 0) {
-                // The encoding for `xor r32, r32` is `0x31 /r`.
-                const encoder = try Encoder.init(self.code, 3);
-
-                // If we're accessing e.g. r8d, we need to use a REX prefix before the actual operation. Since
-                // this is a 32-bit operation, the W flag is set to zero. X is also zero, as we're not using a SIB.
-                // Both R and B are set, as we're extending, in effect, the register bits *and* the operand.
-                encoder.rex(.{
-                    .r = reg.isExtended(),
-                    .b = reg.isExtended(),
+                _ = try self.addInst(.{
+                    .tag = .xor,
+                    .ops = (Mir.Ops{
+                        .reg1 = reg,
+                        .reg2 = reg,
+                    }).encode(),
+                    .data = undefined,
                 });
-                encoder.opcode_1byte(0x31);
-                // Section 3.1.1.1 of the Intel x64 Manual states that "/r indicates that the
-                // ModR/M byte of the instruction contains a register operand and an r/m operand."
-                encoder.modRm_direct(
-                    reg.lowId(),
-                    reg.lowId(),
-                );
-
                 return;
             }
             if (x <= math.maxInt(i32)) {
                 // Next best case: if we set the lower four bytes, the upper four will be zeroed.
-                //
-                // The encoding for `mov IMM32 -> REG` is (0xB8 + R) IMM.
-
-                const encoder = try Encoder.init(self.code, 6);
-                // Just as with XORing, we need a REX prefix. This time though, we only
-                // need the B bit set, as we're extending the opcode's register field,
-                // and there is no Mod R/M byte.
-                encoder.rex(.{
-                    .b = reg.isExtended(),
+                _ = try self.addInst(.{
+                    .tag = .mov,
+                    .ops = (Mir.Ops{
+                        .reg1 = reg,
+                    }).encode(),
+                    .data = .{ .imm = @bitCast(i32, @intCast(u32, x)) },
                 });
-                encoder.opcode_withReg(0xB8, reg.lowId());
-
-                // no ModR/M byte
-
-                // IMM
-                encoder.imm32(@intCast(i32, x));
                 return;
             }
             // Worst case: we need to load the 64-bit register with the IMM. GNU's assemblers calls
@@ -3112,137 +3024,127 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             // This encoding is, in fact, the *same* as the one used for 32-bit loads. The only
             // difference is that we set REX.W before the instruction, which extends the load to
             // 64-bit and uses the full bit-width of the register.
-            {
-                const encoder = try Encoder.init(self.code, 10);
-                encoder.rex(.{
-                    .w = true,
-                    .b = reg.isExtended(),
-                });
-                encoder.opcode_withReg(0xB8, reg.lowId());
-                encoder.imm64(x);
-            }
+            const payload = try self.addExtra(Mir.Imm64.encode(x));
+            _ = try self.addInst(.{
+                .tag = .movabs,
+                .ops = (Mir.Ops{
+                    .reg1 = reg,
+                }).encode(),
+                .data = .{ .payload = payload },
+            });
         },
         .embedded_in_code => |code_offset| {
-            // We need the offset from RIP in a signed i32 twos complement.
-            // The instruction is 7 bytes long and RIP points to the next instruction.
+            _ = code_offset;
+            return self.fail("TODO set register embedded_in_code", .{});
+            // // We need the offset from RIP in a signed i32 twos complement.
+            // // The instruction is 7 bytes long and RIP points to the next instruction.
 
-            // 64-bit LEA is encoded as REX.W 8D /r.
-            const rip = self.code.items.len + 7;
-            const big_offset = @intCast(i64, code_offset) - @intCast(i64, rip);
-            const offset = @intCast(i32, big_offset);
-            const encoder = try Encoder.init(self.code, 7);
+            // // 64-bit LEA is encoded as REX.W 8D /r.
+            // const rip = self.code.items.len + 7;
+            // const big_offset = @intCast(i64, code_offset) - @intCast(i64, rip);
+            // const offset = @intCast(i32, big_offset);
+            // const encoder = try Encoder.init(self.code, 7);
 
-            // byte 1, always exists because w = true
-            encoder.rex(.{
-                .w = true,
-                .r = reg.isExtended(),
-            });
-            // byte 2
-            encoder.opcode_1byte(0x8D);
-            // byte 3
-            encoder.modRm_RIPDisp32(reg.lowId());
-            // byte 4-7
-            encoder.disp32(offset);
+            // // byte 1, always exists because w = true
+            // encoder.rex(.{
+            //     .w = true,
+            //     .r = reg.isExtended(),
+            // });
+            // // byte 2
+            // encoder.opcode_1byte(0x8D);
+            // // byte 3
+            // encoder.modRm_RIPDisp32(reg.lowId());
+            // // byte 4-7
+            // encoder.disp32(offset);
 
-            // Double check that we haven't done any math errors
-            assert(rip == self.code.items.len);
+            // // Double check that we haven't done any math errors
+            // assert(rip == self.code.items.len);
         },
         .register => |src_reg| {
             // If the registers are the same, nothing to do.
             if (src_reg.id() == reg.id())
                 return;
 
-            // This is a variant of 8B /r.
-            const abi_size = ty.abiSize(self.target.*);
-            const encoder = try Encoder.init(self.code, 3);
-            encoder.rex(.{
-                .w = abi_size == 8,
-                .r = reg.isExtended(),
-                .b = src_reg.isExtended(),
+            _ = try self.addInst(.{
+                .tag = .mov,
+                .ops = (Mir.Ops{
+                    .reg1 = reg,
+                    .reg2 = src_reg,
+                }).encode(),
+                .data = undefined,
             });
-            encoder.opcode_1byte(0x8B);
-            encoder.modRm_direct(reg.lowId(), src_reg.lowId());
         },
         .memory => |x| {
             if (self.bin_file.options.pie) {
-                // RIP-relative displacement to the entry in the GOT table.
-                const abi_size = ty.abiSize(self.target.*);
-                const encoder = try Encoder.init(self.code, 10);
+                return self.fail("TODO set reg from memory PIE", .{});
+                // // RIP-relative displacement to the entry in the GOT table.
+                // const abi_size = ty.abiSize(self.target.*);
+                // const encoder = try Encoder.init(self.code, 10);
 
-                // LEA reg, [<offset>]
+                // // LEA reg, [<offset>]
 
-                // We encode the instruction FIRST because prefixes may or may not appear.
-                // After we encode the instruction, we will know that the displacement bytes
-                // for [<offset>] will be at self.code.items.len - 4.
-                encoder.rex(.{
-                    .w = true, // force 64 bit because loading an address (to the GOT)
-                    .r = reg.isExtended(),
-                });
-                encoder.opcode_1byte(0x8D);
-                encoder.modRm_RIPDisp32(reg.lowId());
-                encoder.disp32(0);
+                // // We encode the instruction FIRST because prefixes may or may not appear.
+                // // After we encode the instruction, we will know that the displacement bytes
+                // // for [<offset>] will be at self.code.items.len - 4.
+                // encoder.rex(.{
+                //     .w = true, // force 64 bit because loading an address (to the GOT)
+                //     .r = reg.isExtended(),
+                // });
+                // encoder.opcode_1byte(0x8D);
+                // encoder.modRm_RIPDisp32(reg.lowId());
+                // encoder.disp32(0);
 
-                const offset = @intCast(u32, self.code.items.len);
+                // const offset = @intCast(u32, self.code.items.len);
 
-                if (self.bin_file.cast(link.File.MachO)) |macho_file| {
-                    // TODO I think the reloc might be in the wrong place.
-                    const decl = macho_file.active_decl.?;
-                    // Load reloc for LEA instruction.
-                    try decl.link.macho.relocs.append(self.bin_file.allocator, .{
-                        .offset = offset - 4,
-                        .target = .{ .local = @intCast(u32, x) },
-                        .addend = 0,
-                        .subtractor = null,
-                        .pcrel = true,
-                        .length = 2,
-                        .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_GOT),
-                    });
-                } else {
-                    return self.fail("TODO implement genSetReg for PIE GOT indirection on this platform", .{});
-                }
+                // if (self.bin_file.cast(link.File.MachO)) |macho_file| {
+                //     // TODO I think the reloc might be in the wrong place.
+                //     const decl = macho_file.active_decl.?;
+                //     // Load reloc for LEA instruction.
+                //     try decl.link.macho.relocs.append(self.bin_file.allocator, .{
+                //         .offset = offset - 4,
+                //         .target = .{ .local = @intCast(u32, x) },
+                //         .addend = 0,
+                //         .subtractor = null,
+                //         .pcrel = true,
+                //         .length = 2,
+                //         .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_GOT),
+                //     });
+                // } else {
+                //     return self.fail("TODO implement genSetReg for PIE GOT indirection on this platform", .{});
+                // }
 
-                // MOV reg, [reg]
-                encoder.rex(.{
-                    .w = abi_size == 8,
-                    .r = reg.isExtended(),
-                    .b = reg.isExtended(),
-                });
-                encoder.opcode_1byte(0x8B);
-                encoder.modRm_indirectDisp0(reg.lowId(), reg.lowId());
+                // // MOV reg, [reg]
+                // encoder.rex(.{
+                //     .w = abi_size == 8,
+                //     .r = reg.isExtended(),
+                //     .b = reg.isExtended(),
+                // });
+                // encoder.opcode_1byte(0x8B);
+                // encoder.modRm_indirectDisp0(reg.lowId(), reg.lowId());
             } else if (x <= math.maxInt(i32)) {
-                // Moving from memory to a register is a variant of `8B /r`.
-                // Since we're using 64-bit moves, we require a REX.
-                // This variant also requires a SIB, as it would otherwise be RIP-relative.
-                // We want mode zero with the lower three bits set to four to indicate an SIB with no other displacement.
-                // The SIB must be 0x25, to indicate a disp32 with no scaled index.
-                // 0b00RRR100, where RRR is the lower three bits of the register ID.
-                // The instruction is thus eight bytes; REX 0x8B 0b00RRR100 0x25 followed by a four-byte disp32.
-                const abi_size = ty.abiSize(self.target.*);
-                const encoder = try Encoder.init(self.code, 8);
-                encoder.rex(.{
-                    .w = abi_size == 8,
-                    .r = reg.isExtended(),
+                // mov reg, [ds:imm32]
+                _ = try self.addInst(.{
+                    .tag = .mov,
+                    .ops = (Mir.Ops{
+                        .reg1 = reg,
+                        .flags = 0b01,
+                    }).encode(),
+                    .data = .{ .imm = @intCast(i32, x) },
                 });
-                encoder.opcode_1byte(0x8B);
-                // effective address = [SIB]
-                encoder.modRm_SIBDisp0(reg.lowId());
-                // SIB = disp32
-                encoder.sib_disp32();
-                encoder.disp32(@intCast(i32, x));
             } else {
-                // If this is RAX, we can use a direct load; otherwise, we need to load the address, then indirectly load
-                // the value.
+                // If this is RAX, we can use a direct load.
+                // Otherwise, we need to load the address, then indirectly load the value.
                 if (reg.id() == 0) {
-                    // REX.W 0xA1 moffs64*
-                    // moffs64* is a 64-bit offset "relative to segment base", which really just means the
-                    // absolute address for all practical purposes.
-
-                    const encoder = try Encoder.init(self.code, 10);
-                    encoder.rex(.{
-                        .w = true,
+                    // movabs rax, ds:moffs64
+                    const payload = try self.addExtra(Mir.Imm64.encode(x));
+                    _ = try self.addInst(.{
+                        .tag = .movabs,
+                        .ops = (Mir.Ops{
+                            .reg1 = .rax,
+                            .flags = 0b01, // imm64 will become moffs64
+                        }).encode(),
+                        .data = .{ .payload = payload },
                     });
-                    encoder.opcode_1byte(0xA1);
-                    encoder.writeIntLittle(u64, x);
                 } else {
                     // This requires two instructions; a move imm as used above, followed by an indirect load using the register
                     // as the address and the register as the destination.
@@ -3260,16 +3162,16 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                     // Currently, we're only allowing 64-bit registers, so we need the `REX.W 8B /r` variant.
                     // TODO: determine whether to allow other sized registers, and if so, handle them properly.
 
-                    // mov reg, [reg]
-                    const abi_size = ty.abiSize(self.target.*);
-                    const encoder = try Encoder.init(self.code, 3);
-                    encoder.rex(.{
-                        .w = abi_size == 8,
-                        .r = reg.isExtended(),
-                        .b = reg.isExtended(),
+                    // mov reg, [reg + 0x0]
+                    _ = try self.addInst(.{
+                        .tag = .mov,
+                        .ops = (Mir.Ops{
+                            .reg1 = reg,
+                            .reg2 = reg,
+                            .flags = 0b01,
+                        }).encode(),
+                        .data = .{ .imm = 0 },
                     });
-                    encoder.opcode_1byte(0x8B);
-                    encoder.modRm_indirectDisp0(reg.lowId(), reg.lowId());
                 }
             }
         },
@@ -3280,21 +3182,15 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                 return self.fail("stack offset too large", .{});
             }
             const ioff = -@intCast(i32, off);
-            const encoder = try Encoder.init(self.code, 3);
-            encoder.rex(.{
-                .w = abi_size == 8,
-                .r = reg.isExtended(),
+            _ = try self.addInst(.{
+                .tag = .mov,
+                .ops = (Mir.Ops{
+                    .reg1 = reg,
+                    .reg2 = .rcx,
+                    .flags = 0b01,
+                }).encode(),
+                .data = .{ .imm = ioff },
             });
-            encoder.opcode_1byte(0x8B);
-            if (std.math.minInt(i8) <= ioff and ioff <= std.math.maxInt(i8)) {
-                // Example: 48 8b 4d 7f           mov    rcx,QWORD PTR [rbp+0x7f]
-                encoder.modRm_indirectDisp8(reg.lowId(), Register.ebp.lowId());
-                encoder.disp8(@intCast(i8, ioff));
-            } else {
-                // Example: 48 8b 8d 80 00 00 00  mov    rcx,QWORD PTR [rbp+0x80]
-                encoder.modRm_indirectDisp32(reg.lowId(), Register.ebp.lowId());
-                encoder.disp32(ioff);
-            }
         },
     }
 }

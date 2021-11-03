@@ -95,6 +95,9 @@ pub fn emitMir(emit: *Emit) InnerError!void {
 
             .ret => try emit.mirRet(inst),
 
+            .syscall => try emit.mirSyscall(),
+            .brk => try emit.mirBrk(),
+
             else => {
                 return emit.fail("Implement MIR->Isel lowering for x86_64 for pseudo-inst: {s}", .{tag});
             },
@@ -107,6 +110,16 @@ fn fail(emit: *Emit, comptime format: []const u8, args: anytype) InnerError {
     assert(emit.err_msg == null);
     emit.err_msg = try ErrorMsg.create(emit.bin_file.allocator, emit.src_loc, format, args);
     return error.EmitFail;
+}
+
+fn mirBrk(emit: *Emit) InnerError!void {
+    const encoder = try Encoder.init(emit.code, 1);
+    encoder.opcode_1byte(0xcc);
+}
+
+fn mirSyscall(emit: *Emit) InnerError!void {
+    const encoder = try Encoder.init(emit.code, 2);
+    encoder.opcode_2byte(0x0f, 0x05);
 }
 
 fn mirPushPop(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
@@ -265,12 +278,26 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
             encoder.opcode_1byte(opc);
             encoder.modRm_direct(ops.reg2.lowId(), ops.reg1.lowId());
         },
-        0b01 => {
-            // OP reg1, [reg2 + imm32]
-            // OP r64, r/m64
+        0b01 => blk: {
             const imm = emit.mir.instructions.items(.data)[inst].imm;
             const opcode = getArithOpCode(tag, .rm);
             const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
+            if (ops.reg2 == .none) {
+                // OP reg1, [imm32]
+                // OP r64, r/m64
+                const encoder = try Encoder.init(emit.code, 8);
+                encoder.rex(.{
+                    .w = ops.reg1.size() == 64,
+                    .r = ops.reg1.isExtended(),
+                });
+                encoder.opcode_1byte(opc);
+                encoder.modRm_SIBDisp0(ops.reg1.lowId());
+                encoder.sib_disp32();
+                encoder.disp32(imm);
+                break :blk;
+            }
+            // OP reg1, [reg2 + imm32]
+            // OP r64, r/m64
             const encoder = try Encoder.init(emit.code, 7);
             encoder.rex(.{
                 .w = ops.reg1.size() == 64,
@@ -457,44 +484,53 @@ fn mirMovabs(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     assert(tag == .movabs);
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
 
-    if (ops.reg1.size() == 64) {
+    const encoder = try Encoder.init(emit.code, 10);
+    const is_64 = blk: {
+        if (ops.flags == 0b00) {
+            // movabs reg, imm64
+            const opc: u8 = if (ops.reg1.size() == 8) 0xb0 else 0xb8;
+            if (ops.reg1.size() == 64) {
+                encoder.rex(.{
+                    .w = true,
+                    .b = ops.reg1.isExtended(),
+                });
+                encoder.opcode_withReg(opc, ops.reg1.lowId());
+                break :blk true;
+            }
+            break :blk false;
+        }
+        if (ops.reg1 == .none) {
+            // movabs moffs64, rax
+            const opc: u8 = if (ops.reg2.size() == 8) 0xa2 else 0xa3;
+            encoder.rex(.{
+                .w = ops.reg2.size() == 64,
+            });
+            encoder.opcode_1byte(opc);
+            break :blk ops.reg2.size() == 64;
+        } else {
+            // movabs rax, moffs64
+            const opc: u8 = if (ops.reg2.size() == 8) 0xa0 else 0xa1;
+            encoder.rex(.{
+                .w = ops.reg1.size() == 64,
+            });
+            encoder.opcode_1byte(opc);
+            break :blk ops.reg1.size() == 64;
+        }
+    };
+
+    if (is_64) {
         const payload = emit.mir.instructions.items(.data)[inst].payload;
         const imm64 = emit.mir.extraData(Mir.Imm64, payload).data;
-        const encoder = try Encoder.init(emit.code, 10);
-        encoder.rex(.{
-            .w = true,
-            .b = ops.reg1.isExtended(),
-        });
-        encoder.opcode_withReg(0xb8, ops.reg1.lowId());
         encoder.imm64(imm64.decode());
-        return;
-    }
-
-    const imm = emit.mir.instructions.items(.data)[inst].imm;
-    if (imm <= math.maxInt(i8)) {
-        const encoder = try Encoder.init(emit.code, 3);
-        encoder.rex(.{
-            .w = false,
-            .b = ops.reg1.isExtended(),
-        });
-        encoder.opcode_withReg(0xb0, ops.reg1.lowId());
-        encoder.imm8(@intCast(i8, imm));
-    } else if (imm <= math.maxInt(i16)) {
-        const encoder = try Encoder.init(emit.code, 4);
-        encoder.rex(.{
-            .w = false,
-            .b = ops.reg1.isExtended(),
-        });
-        encoder.opcode_withReg(0xb8, ops.reg1.lowId());
-        encoder.imm16(@intCast(i16, imm));
     } else {
-        const encoder = try Encoder.init(emit.code, 6);
-        encoder.rex(.{
-            .w = false,
-            .b = ops.reg1.isExtended(),
-        });
-        encoder.opcode_withReg(0xb8, ops.reg1.lowId());
-        encoder.imm32(imm);
+        const imm = emit.mir.instructions.items(.data)[inst].imm;
+        if (imm <= math.maxInt(i8)) {
+            encoder.imm8(@intCast(i8, imm));
+        } else if (imm <= math.maxInt(i16)) {
+            encoder.imm16(@intCast(i16, imm));
+        } else {
+            encoder.imm32(imm);
+        }
     }
 }
 
