@@ -61,6 +61,15 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .sbb_scale_src => try emit.mirArithScaleSrc(.sbb, inst),
             .cmp_scale_src => try emit.mirArithScaleSrc(.cmp, inst),
 
+            .adc_scale_dst => try emit.mirArithScaleDst(.adc, inst),
+            .add_scale_dst => try emit.mirArithScaleDst(.add, inst),
+            .sub_scale_dst => try emit.mirArithScaleDst(.sub, inst),
+            .xor_scale_dst => try emit.mirArithScaleDst(.xor, inst),
+            .and_scale_dst => try emit.mirArithScaleDst(.@"and", inst),
+            .or_scale_dst => try emit.mirArithScaleDst(.@"or", inst),
+            .sbb_scale_dst => try emit.mirArithScaleDst(.sbb, inst),
+            .cmp_scale_dst => try emit.mirArithScaleDst(.cmp, inst),
+
             .mov => try emit.mirMov(inst),
             .movabs => try emit.mirMovabs(inst),
 
@@ -337,8 +346,8 @@ fn mirArithScaleSrc(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerE
     const encoder = try Encoder.init(emit.code, 8);
     encoder.rex(.{
         .w = ops.reg1.size() == 64,
-        .r = ops.reg2.isExtended(),
-        .b = ops.reg1.isExtended(),
+        .r = ops.reg1.isExtended(),
+        .b = ops.reg2.isExtended(),
     });
     encoder.opcode_1byte(opc);
     if (imm <= math.maxInt(i8)) {
@@ -348,6 +357,54 @@ fn mirArithScaleSrc(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerE
     } else {
         encoder.modRm_SIBDisp32(ops.reg1.lowId());
         encoder.sib_scaleIndexBaseDisp32(scale, Register.rcx.lowId(), ops.reg2.lowId());
+        encoder.disp32(imm);
+    }
+}
+
+fn mirArithScaleDst(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    const scale = ops.flags;
+    const imm = emit.mir.instructions.items(.data)[inst].imm;
+
+    if (ops.reg2 == .none) {
+        // OP [reg1 + scale*rax + 0], imm32
+        const opcode = getArithOpCode(tag, .mi);
+        const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
+        const encoder = try Encoder.init(emit.code, 8);
+        encoder.rex(.{
+            .w = ops.reg1.size() == 64,
+            .b = ops.reg1.isExtended(),
+        });
+        encoder.opcode_1byte(opc);
+        encoder.modRm_SIBDisp0(opcode.modrm_ext);
+        encoder.sib_scaleIndexBase(scale, Register.rax.lowId(), ops.reg1.lowId());
+        if (imm <= math.maxInt(i8)) {
+            encoder.imm8(@intCast(i8, imm));
+        } else if (imm <= math.maxInt(i16)) {
+            encoder.imm16(@intCast(i16, imm));
+        } else {
+            encoder.imm32(imm);
+        }
+        return;
+    }
+
+    // OP [reg1 + scale*rax + imm32], reg2
+    const opcode = getArithOpCode(tag, .mr);
+    const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
+    const encoder = try Encoder.init(emit.code, 8);
+    encoder.rex(.{
+        .w = ops.reg1.size() == 64,
+        .r = ops.reg2.isExtended(),
+        .b = ops.reg1.isExtended(),
+    });
+    encoder.opcode_1byte(opc);
+    if (imm <= math.maxInt(i8)) {
+        encoder.modRm_SIBDisp8(ops.reg2.lowId());
+        encoder.sib_scaleIndexBaseDisp8(scale, Register.rax.lowId(), ops.reg1.lowId());
+        encoder.disp8(@intCast(i8, imm));
+    } else {
+        encoder.modRm_SIBDisp32(ops.reg2.lowId());
+        encoder.sib_scaleIndexBaseDisp32(scale, Register.rax.lowId(), ops.reg1.lowId());
         encoder.disp32(imm);
     }
 }
