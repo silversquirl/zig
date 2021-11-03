@@ -52,6 +52,15 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .sbb => try emit.mirArith(.sbb, inst),
             .cmp => try emit.mirArith(.cmp, inst),
 
+            .adc_scale_src => try emit.mirArithScaleSrc(.adc, inst),
+            .add_scale_src => try emit.mirArithScaleSrc(.add, inst),
+            .sub_scale_src => try emit.mirArithScaleSrc(.sub, inst),
+            .xor_scale_src => try emit.mirArithScaleSrc(.xor, inst),
+            .and_scale_src => try emit.mirArithScaleSrc(.@"and", inst),
+            .or_scale_src => try emit.mirArithScaleSrc(.@"or", inst),
+            .sbb_scale_src => try emit.mirArithScaleSrc(.sbb, inst),
+            .cmp_scale_src => try emit.mirArithScaleSrc(.cmp, inst),
+
             .mov => try emit.mirMov(inst),
             .movabs => try emit.mirMovabs(inst),
 
@@ -148,10 +157,11 @@ const EncType = enum {
 
 const OpCode = struct {
     opc: u8,
+    /// Only used if `EncType == .mi`.
     modrm_ext: u3,
 };
 
-inline fn getArithOpCode(tag: Mir.Inst.Tag, enc: EncType, ops: Mir.Ops) OpCode {
+inline fn getArithOpCode(tag: Mir.Inst.Tag, enc: EncType) OpCode {
     switch (enc) {
         .mi => return switch (tag) {
             .adc => .{ .opc = 0x81, .modrm_ext = 0x2 },
@@ -176,7 +186,7 @@ inline fn getArithOpCode(tag: Mir.Inst.Tag, enc: EncType, ops: Mir.Ops) OpCode {
                 .cmp => 0x39,
                 else => unreachable,
             };
-            return .{ .opc = opc, .modrm_ext = ops.reg2.lowId() };
+            return .{ .opc = opc, .modrm_ext = undefined };
         },
         .rm => {
             const opc: u8 = switch (tag) {
@@ -190,7 +200,7 @@ inline fn getArithOpCode(tag: Mir.Inst.Tag, enc: EncType, ops: Mir.Ops) OpCode {
                 .cmp => 0x3b,
                 else => unreachable,
             };
-            return .{ .opc = opc, .modrm_ext = ops.reg1.lowId() };
+            return .{ .opc = opc, .modrm_ext = undefined };
         },
     }
 }
@@ -203,7 +213,7 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
                 // OP reg1, imm32
                 // OP r/m64, imm32
                 const imm = emit.mir.instructions.items(.data)[inst].imm;
-                const opcode = getArithOpCode(tag, .mi, ops);
+                const opcode = getArithOpCode(tag, .mi);
                 const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
                 const encoder = try Encoder.init(emit.code, 7);
                 encoder.rex(.{
@@ -217,7 +227,7 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
             }
             // OP reg1, reg2
             // OP r/m64, r64
-            const opcode = getArithOpCode(tag, .mr, ops);
+            const opcode = getArithOpCode(tag, .mr);
             const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
             const encoder = try Encoder.init(emit.code, 3);
             encoder.rex(.{
@@ -226,13 +236,13 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
                 .b = ops.reg1.isExtended(),
             });
             encoder.opcode_1byte(opc);
-            encoder.modRm_direct(opcode.modrm_ext, ops.reg1.lowId());
+            encoder.modRm_direct(ops.reg2.lowId(), ops.reg1.lowId());
         },
         0b01 => {
             // OP reg1, [reg2 + imm32]
             // OP r64, r/m64
             const imm = emit.mir.instructions.items(.data)[inst].imm;
-            const opcode = getArithOpCode(tag, .rm, ops);
+            const opcode = getArithOpCode(tag, .rm);
             const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
             const encoder = try Encoder.init(emit.code, 7);
             encoder.rex(.{
@@ -242,10 +252,10 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
             });
             encoder.opcode_1byte(opc);
             if (imm <= math.maxInt(i8)) {
-                encoder.modRm_indirectDisp8(opcode.modrm_ext, ops.reg2.lowId());
+                encoder.modRm_indirectDisp8(ops.reg1.lowId(), ops.reg2.lowId());
                 encoder.disp8(@intCast(i8, imm));
             } else {
-                encoder.modRm_indirectDisp32(opcode.modrm_ext, ops.reg2.lowId());
+                encoder.modRm_indirectDisp32(ops.reg1.lowId(), ops.reg2.lowId());
                 encoder.disp32(imm);
             }
         },
@@ -254,7 +264,7 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
                 // OP [reg1 + 0], imm32
                 // OP r/m64, imm32
                 const imm = emit.mir.instructions.items(.data)[inst].imm;
-                const opcode = getArithOpCode(tag, .mi, ops);
+                const opcode = getArithOpCode(tag, .mi);
                 const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
                 const encoder = try Encoder.init(emit.code, 7);
                 encoder.rex(.{
@@ -275,7 +285,7 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
             // OP [reg1 + imm32], reg2
             // OP r/m64, r64
             const imm = emit.mir.instructions.items(.data)[inst].imm;
-            const opcode = getArithOpCode(tag, .mr, ops);
+            const opcode = getArithOpCode(tag, .mr);
             const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
             const encoder = try Encoder.init(emit.code, 7);
             encoder.rex(.{
@@ -285,10 +295,10 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
             });
             encoder.opcode_1byte(opc);
             if (imm <= math.maxInt(i8)) {
-                encoder.modRm_indirectDisp8(opcode.modrm_ext, ops.reg1.lowId());
+                encoder.modRm_indirectDisp8(ops.reg2.lowId(), ops.reg1.lowId());
                 encoder.disp8(@intCast(i8, imm));
             } else {
-                encoder.modRm_indirectDisp32(opcode.modrm_ext, ops.reg1.lowId());
+                encoder.modRm_indirectDisp32(ops.reg2.lowId(), ops.reg1.lowId());
                 encoder.disp32(imm);
             }
         },
@@ -297,7 +307,7 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
             // OP r/m64, imm32
             const payload = emit.mir.instructions.items(.data)[inst].payload;
             const imm_pair = emit.mir.extraData(Mir.ImmPair, payload).data;
-            const opcode = getArithOpCode(tag, .mi, ops);
+            const opcode = getArithOpCode(tag, .mi);
             const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
             const encoder = try Encoder.init(emit.code, 11);
             encoder.rex(.{
@@ -314,6 +324,31 @@ fn mirArith(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!voi
             }
             encoder.imm32(imm_pair.operand);
         },
+    }
+}
+
+fn mirArithScaleSrc(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    const scale = ops.flags;
+    // OP reg1, [reg2 + scale*rcx + imm32]
+    const opcode = getArithOpCode(tag, .rm);
+    const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
+    const imm = emit.mir.instructions.items(.data)[inst].imm;
+    const encoder = try Encoder.init(emit.code, 8);
+    encoder.rex(.{
+        .w = ops.reg1.size() == 64,
+        .r = ops.reg2.isExtended(),
+        .b = ops.reg1.isExtended(),
+    });
+    encoder.opcode_1byte(opc);
+    if (imm <= math.maxInt(i8)) {
+        encoder.modRm_SIBDisp8(ops.reg1.lowId());
+        encoder.sib_scaleIndexBaseDisp8(scale, Register.rcx.lowId(), ops.reg2.lowId());
+        encoder.disp8(@intCast(i8, imm));
+    } else {
+        encoder.modRm_SIBDisp32(ops.reg1.lowId());
+        encoder.sib_scaleIndexBaseDisp32(scale, Register.rcx.lowId(), ops.reg2.lowId());
+        encoder.disp32(imm);
     }
 }
 
