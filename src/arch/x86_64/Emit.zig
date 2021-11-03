@@ -70,12 +70,22 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .sbb_scale_dst => try emit.mirArithScaleDst(.sbb, inst),
             .cmp_scale_dst => try emit.mirArithScaleDst(.cmp, inst),
 
+            .adc_scale_imm => try emit.mirArithScaleImm(.adc, inst),
+            .add_scale_imm => try emit.mirArithScaleImm(.add, inst),
+            .sub_scale_imm => try emit.mirArithScaleImm(.sub, inst),
+            .xor_scale_imm => try emit.mirArithScaleImm(.xor, inst),
+            .and_scale_imm => try emit.mirArithScaleImm(.@"and", inst),
+            .or_scale_imm => try emit.mirArithScaleImm(.@"or", inst),
+            .sbb_scale_imm => try emit.mirArithScaleImm(.sbb, inst),
+            .cmp_scale_imm => try emit.mirArithScaleImm(.cmp, inst),
+
             // Even though MOV is technically not an arithmetic op,
             // its structure can be represented using the same set of
             // opcode primitives.
             .mov => try emit.mirArith(.mov, inst),
             .mov_scale_src => try emit.mirArithScaleSrc(.mov, inst),
             .mov_scale_dst => try emit.mirArithScaleDst(.mov, inst),
+            .mov_scale_imm => try emit.mirArithScaleImm(.mov, inst),
             .movabs => try emit.mirMovabs(inst),
 
             .lea => try emit.mirLea(inst),
@@ -415,6 +425,31 @@ fn mirArithScaleDst(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerE
         encoder.sib_scaleIndexBaseDisp32(scale, Register.rax.lowId(), ops.reg1.lowId());
         encoder.disp32(imm);
     }
+}
+
+fn mirArithScaleImm(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    const scale = ops.flags;
+    const payload = emit.mir.instructions.items(.data)[inst].payload;
+    const imm_pair = emit.mir.extraData(Mir.ImmPair, payload).data;
+    const opcode = getArithOpCode(tag, .mi);
+    const opc = if (ops.reg1.size() == 8) opcode.opc - 1 else opcode.opc;
+    const encoder = try Encoder.init(emit.code, 2);
+    encoder.rex(.{
+        .w = ops.reg1.size() == 64,
+        .b = ops.reg1.isExtended(),
+    });
+    encoder.opcode_1byte(opc);
+    if (imm_pair.dest_off <= math.maxInt(i8)) {
+        encoder.modRm_SIBDisp8(opcode.modrm_ext);
+        encoder.sib_scaleIndexBaseDisp8(scale, Register.rax.lowId(), ops.reg1.lowId());
+        encoder.disp8(@intCast(i8, imm_pair.dest_off));
+    } else {
+        encoder.modRm_SIBDisp32(opcode.modrm_ext);
+        encoder.sib_scaleIndexBaseDisp32(scale, Register.rax.lowId(), ops.reg1.lowId());
+        encoder.disp32(imm_pair.dest_off);
+    }
+    encoder.imm32(imm_pair.operand);
 }
 
 fn mirMovabs(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
