@@ -93,7 +93,8 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .push => try emit.mirPushPop(.push, inst),
             .pop => try emit.mirPushPop(.pop, inst),
 
-            .jmp => try emit.mirJmp(inst),
+            .jmp => try emit.mirJmpCall(.jmp, inst),
+            .call => try emit.mirJmpCall(.call, inst),
 
             .ret => try emit.mirRet(inst),
 
@@ -160,29 +161,44 @@ fn mirPushPop(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!v
     }
 }
 
-fn mirJmp(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
-    const tag = emit.mir.instructions.items(.tag)[inst];
-    assert(tag == .jmp);
+fn mirJmpCall(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
     const flag = @truncate(u1, ops.flags);
-    if (flag == 0b0) {
-        // JMP rel
-        return emit.fail("TODO implement emitting JMP inst/rel", .{});
+    if (flag == 0) {
         // const imm = emit.mir.instructions.items(.data)[inst].imm;
-        // const opc: u8 = if (imm <= math.maxInt(i8)) 0xeb else 0xe9;
+        // const opc: u8 = switch (tag) {
+        //     .jmp => if (imm <= math.maxInt(i8)) @as(u8, 0xeb) else 0xe9,
+        //     .call => 0xe8,
+        //     else => unreachable,
+        // };
         // const encoder = try Encoder.init(emit.code, 5);
         // encoder.opcode_1byte(opc);
         // if (imm <= math.maxInt(i8)) {
-        //     encoder.disp8(@intCast(i8, imm));
+        //     encoder.imm8(@intCast(i8, imm));
         // } else {
-        //     encoder.disp32(imm);
+        //     encoder.imm32(imm);
         // }
-    } else {
-        // JMP reg
-        const encoder = try Encoder.init(emit.code, 2);
-        encoder.opcode_1byte(0xff);
-        encoder.modRm_direct(0x4, ops.reg1.lowId());
+        return emit.fail("TODO implement emitting JMP/CALL inst/rel", .{});
     }
+    const modrm_ext: u3 = switch (tag) {
+        .jmp => 0x4,
+        .call => 0x2,
+        else => unreachable,
+    };
+    if (ops.reg1 == .none) {
+        // JMP/CALL [imm]
+        const imm = emit.mir.instructions.items(.data)[inst].imm;
+        const encoder = try Encoder.init(emit.code, 7);
+        encoder.opcode_1byte(0xff);
+        encoder.modRm_SIBDisp0(modrm_ext);
+        encoder.sib_disp32();
+        encoder.imm32(imm);
+        return;
+    }
+    // JMP/CALL reg
+    const encoder = try Encoder.init(emit.code, 2);
+    encoder.opcode_1byte(0xff);
+    encoder.modRm_direct(modrm_ext, ops.reg1.lowId());
 }
 
 fn mirRet(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {

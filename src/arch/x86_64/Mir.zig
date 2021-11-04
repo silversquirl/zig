@@ -158,18 +158,15 @@ pub const Inst = struct {
         /// - Uses the `inst` Data tag as the jump target.
         /// - reg1 and reg2 are ignored.
         /// ops flags: 0bX1:
-        /// - reg1 is the jump target.
-        /// - reg2 and data are ignored.
+        /// - reg1 is the jump target, reg2 and data are ignored.
+        /// - if reg1 is none, [imm]
         jmp,
+        call,
 
         /// ops flags:  form:
         ///       0bX0   reg1
         ///       0bX1   [reg1 + imm32]
         push,
-
-        /// ops flags:  form:
-        ///       0bX0   reg1
-        ///       0bX1   [reg1 + imm32]
         pop,
 
         /// ops flags:  form:
@@ -179,10 +176,13 @@ pub const Inst = struct {
         ///       0b11  retn
         ret,
 
-        /// Pseudo-instructions
-        /// call extern
-        call_extern,
+        /// Fast system call
+        syscall,
 
+        /// Breakpoint
+        brk,
+
+        /// Pseudo-instructions
         /// end of prologue
         dbg_prologue_end,
 
@@ -191,12 +191,6 @@ pub const Inst = struct {
 
         /// update debug line
         dbg_line,
-
-        /// Fast system call
-        syscall,
-
-        /// Breakpoint
-        brk,
     };
 
     /// The position of an MIR instruction within the `Mir` instructions array.

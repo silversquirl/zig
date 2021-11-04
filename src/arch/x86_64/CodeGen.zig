@@ -413,7 +413,6 @@ fn gen(self: *Self) InnerError!void {
 
         if (aligned_stack_end > 0) {
             // add rsp, x
-            aligned_stack_end = 23;
             _ = try self.addInst(.{
                 .tag = .add,
                 .ops = (Mir.Ops{
@@ -1950,23 +1949,22 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
         if (self.air.value(callee)) |func_value| {
             if (func_value.castTag(.function)) |func_payload| {
                 const func = func_payload.data;
-                _ = func;
-                return self.fail("TODO implement calling functions", .{});
-
-                // const ptr_bits = self.target.cpu.arch.ptrBitWidth();
-                // const ptr_bytes: u64 = @divExact(ptr_bits, 8);
-                // const got_addr = if (self.bin_file.cast(link.File.Elf)) |elf_file| blk: {
-                //     const got = &elf_file.program_headers.items[elf_file.phdr_got_index.?];
-                //     break :blk @intCast(u32, got.p_vaddr + func.owner_decl.link.elf.offset_table_index * ptr_bytes);
-                // } else if (self.bin_file.cast(link.File.Coff)) |coff_file|
-                //     @intCast(u32, coff_file.offset_table_virtual_address + func.owner_decl.link.coff.offset_table_index * ptr_bytes)
-                // else
-                //     unreachable;
-
-                // // ff 14 25 xx xx xx xx    call [addr]
-                // try self.code.ensureUnusedCapacity(7);
-                // self.code.appendSliceAssumeCapacity(&[3]u8{ 0xff, 0x14, 0x25 });
-                // mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), got_addr);
+                const ptr_bits = self.target.cpu.arch.ptrBitWidth();
+                const ptr_bytes: u64 = @divExact(ptr_bits, 8);
+                const got_addr = if (self.bin_file.cast(link.File.Elf)) |elf_file| blk: {
+                    const got = &elf_file.program_headers.items[elf_file.phdr_got_index.?];
+                    break :blk @intCast(u32, got.p_vaddr + func.owner_decl.link.elf.offset_table_index * ptr_bytes);
+                } else if (self.bin_file.cast(link.File.Coff)) |coff_file|
+                    @intCast(u32, coff_file.offset_table_virtual_address + func.owner_decl.link.coff.offset_table_index * ptr_bytes)
+                else
+                    unreachable;
+                _ = try self.addInst(.{
+                    .tag = .call,
+                    .ops = (Mir.Ops{
+                        .flags = 0b01,
+                    }).encode(),
+                    .data = .{ .imm = @bitCast(i32, got_addr) },
+                });
             } else if (func_value.castTag(.extern_fn)) |_| {
                 return self.fail("TODO implement calling extern functions", .{});
             } else {
@@ -2053,7 +2051,6 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
             return self.fail("TODO implement calling runtime known function pointer", .{});
         }
     } else if (self.bin_file.cast(link.File.Plan9)) |p9| {
-        _ = p9;
         for (info.args) |mc_arg, arg_i| {
             const arg = args[arg_i];
             const arg_ty = self.air.typeOf(arg);
@@ -2089,18 +2086,19 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
         }
         if (self.air.value(callee)) |func_value| {
             if (func_value.castTag(.function)) |func_payload| {
-                _ = func_payload;
-                return self.fail("TODO implement calling functions", .{});
-                // try p9.seeDecl(func_payload.data.owner_decl);
-                // const ptr_bits = self.target.cpu.arch.ptrBitWidth();
-                // const ptr_bytes: u64 = @divExact(ptr_bits, 8);
-                // const got_addr = p9.bases.data;
-                // const got_index = func_payload.data.owner_decl.link.plan9.got_index.?;
-                // // ff 14 25 xx xx xx xx    call [addr]
-                // try self.code.ensureUnusedCapacity(7);
-                // self.code.appendSliceAssumeCapacity(&[3]u8{ 0xff, 0x14, 0x25 });
-                // const fn_got_addr = got_addr + got_index * ptr_bytes;
-                // mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), @intCast(u32, fn_got_addr));
+                try p9.seeDecl(func_payload.data.owner_decl);
+                const ptr_bits = self.target.cpu.arch.ptrBitWidth();
+                const ptr_bytes: u64 = @divExact(ptr_bits, 8);
+                const got_addr = p9.bases.data;
+                const got_index = func_payload.data.owner_decl.link.plan9.got_index.?;
+                const fn_got_addr = got_addr + got_index * ptr_bytes;
+                _ = try self.addInst(.{
+                    .tag = .call,
+                    .ops = (Mir.Ops{
+                        .flags = 0b01,
+                    }).encode(),
+                    .data = .{ .imm = @bitCast(i32, @intCast(u32, fn_got_addr)) },
+                });
             } else return self.fail("TODO implement calling extern fn on plan9", .{});
         } else {
             return self.fail("TODO implement calling runtime known function pointer", .{});
