@@ -400,13 +400,7 @@ fn gen(self: *Self) InnerError!void {
         if (self.exitlude_jump_relocs.items.len == 1) {
             self.mir_instructions.len -= 1;
         } else for (self.exitlude_jump_relocs.items) |jmp_reloc| {
-            self.mir_instructions.set(jmp_reloc, .{
-                .tag = .jmp,
-                .ops = (Mir.Ops{
-                    .flags = 0b00,
-                }).encode(),
-                .data = .{ .inst = @intCast(u32, self.mir_instructions.len) },
-            });
+            self.mir_instructions.items(.data)[jmp_reloc].inst = @intCast(u32, self.mir_instructions.len);
         }
 
         // try self.dbgSetEpilogueBegin();
@@ -2138,9 +2132,14 @@ fn ret(self: *Self, mcv: MCValue) !void {
     // TODO when implementing defer, this will need to jump to the appropriate defer expression.
     // TODO optimization opportunity: figure out when we can emit this as a 2 byte instruction
     // which is available if the jump is 127 bytes or less forward.
-    // try self.code.resize(self.code.items.len + 5);
-    // self.code.items[self.code.items.len - 5] = 0xe9; // jmp rel32
-    // try self.exitlude_jump_relocs.append(self.gpa, self.code.items.len - 4);
+    const jmp_reloc = try self.addInst(.{
+        .tag = .jmp,
+        .ops = (Mir.Ops{
+            .flags = 0b00,
+        }).encode(),
+        .data = undefined,
+    });
+    try self.exitlude_jump_relocs.append(self.gpa, jmp_reloc);
 }
 
 fn airRet(self: *Self, inst: Air.Inst.Index) !void {
