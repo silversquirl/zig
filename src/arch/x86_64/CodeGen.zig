@@ -377,7 +377,7 @@ fn gen(self: *Self) InnerError!void {
         // yet know how big it will be, so we leave room for a 4-byte stack size.
         // TODO During semantic analysis, check if there are no function calls. If there
         // are none, here we can omit the part where we subtract and then add rsp.
-        _ = try self.addInst(.{
+        const backpatch_reloc = try self.addInst(.{
             .tag = .sub,
             .ops = (Mir.Ops{
                 .reg1 = .rsp,
@@ -385,22 +385,17 @@ fn gen(self: *Self) InnerError!void {
             .data = .{ .imm = 0 },
         });
 
-        // self.code.appendSliceAssumeCapacity(&[_]u8{
-        //     0x55, // push rbp
-        //     0x48, 0x89, 0xe5, // mov rbp, rsp
-        //     0x48, 0x81, 0xec, // sub rsp, imm32 (with reloc)
-        // });
-        // const reloc_index = self.code.items.len;
-        // self.code.items.len += 4;
-
         // try self.dbgSetPrologueEnd();
         try self.genBody(self.air.getMainBody());
 
-        // const stack_end = self.max_end_stack;
-        // if (stack_end > math.maxInt(i32))
-        //     return self.failSymbol("too much stack used in call parameters", .{});
-        // const aligned_stack_end = mem.alignForward(stack_end, self.stack_align);
-        // mem.writeIntLittle(u32, self.code.items[reloc_index..][0..4], @intCast(u32, aligned_stack_end));
+        const stack_end = self.max_end_stack;
+        if (stack_end > math.maxInt(i32)) {
+            return self.failSymbol("too much stack used in call parameters", .{});
+        }
+        const aligned_stack_end = mem.alignForward(stack_end, self.stack_align);
+        if (aligned_stack_end > 0) {
+            self.mir_instructions.items(.data)[backpatch_reloc].imm = @bitCast(i32, @intCast(u32, aligned_stack_end));
+        }
 
         // if (self.code.items.len >= math.maxInt(i32)) {
         //     return self.failSymbol("unable to perform relocation: jump too far", .{});
@@ -428,11 +423,6 @@ fn gen(self: *Self) InnerError!void {
         //     const x = @intCast(u8, aligned_stack_end);
         //     self.code.appendSliceAssumeCapacity(&[_]u8{ 0x48, 0x83, 0xc4, x });
         // }
-
-        // self.code.appendSliceAssumeCapacity(&[_]u8{
-        //     0x5d, // pop rbp
-        //     0xc3, // ret
-        // });
 
         _ = try self.addInst(.{
             .tag = .pop,
