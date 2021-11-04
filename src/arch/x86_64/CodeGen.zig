@@ -397,32 +397,31 @@ fn gen(self: *Self) InnerError!void {
             self.mir_instructions.items(.data)[backpatch_reloc].imm = @bitCast(i32, @intCast(u32, aligned_stack_end));
         }
 
-        // if (self.code.items.len >= math.maxInt(i32)) {
-        //     return self.failSymbol("unable to perform relocation: jump too far", .{});
-        // }
-        // if (self.exitlude_jump_relocs.items.len == 1) {
-        //     self.code.items.len -= 5;
-        // } else for (self.exitlude_jump_relocs.items) |jmp_reloc| {
-        //     const amt = self.code.items.len - (jmp_reloc + 4);
-        //     const s32_amt = @intCast(i32, amt);
-        //     mem.writeIntLittle(i32, self.code.items[jmp_reloc..][0..4], s32_amt);
-        // }
+        if (self.exitlude_jump_relocs.items.len == 1) {
+            self.mir_instructions.len -= 1;
+        } else for (self.exitlude_jump_relocs.items) |jmp_reloc| {
+            self.mir_instructions.set(jmp_reloc, .{
+                .tag = .jmp,
+                .ops = (Mir.Ops{
+                    .flags = 0b00,
+                }).encode(),
+                .data = .{ .inst = @intCast(u32, self.mir_instructions.len) },
+            });
+        }
 
-        // // Important to be after the possible self.code.items.len -= 5 above.
         // try self.dbgSetEpilogueBegin();
 
-        // try self.code.ensureUnusedCapacity(9);
-        // // add rsp, x
-        // if (aligned_stack_end > math.maxInt(i8)) {
-        //     // example: 48 81 c4 ff ff ff 7f  add    rsp,0x7fffffff
-        //     self.code.appendSliceAssumeCapacity(&[_]u8{ 0x48, 0x81, 0xc4 });
-        //     const x = @intCast(u32, aligned_stack_end);
-        //     mem.writeIntLittle(u32, self.code.addManyAsArrayAssumeCapacity(4), x);
-        // } else if (aligned_stack_end != 0) {
-        //     // example: 48 83 c4 7f           add    rsp,0x7f
-        //     const x = @intCast(u8, aligned_stack_end);
-        //     self.code.appendSliceAssumeCapacity(&[_]u8{ 0x48, 0x83, 0xc4, x });
-        // }
+        if (aligned_stack_end > 0) {
+            // add rsp, x
+            aligned_stack_end = 23;
+            _ = try self.addInst(.{
+                .tag = .add,
+                .ops = (Mir.Ops{
+                    .reg1 = .rsp,
+                }).encode(),
+                .data = .{ .imm = @bitCast(i32, @intCast(u32, aligned_stack_end)) },
+            });
+        }
 
         _ = try self.addInst(.{
             .tag = .pop,
@@ -440,9 +439,8 @@ fn gen(self: *Self) InnerError!void {
         });
     } else {
         // try self.dbgSetPrologueEnd();
-        // try self.genBody(self.air.getMainBody());
+        try self.genBody(self.air.getMainBody());
         // try self.dbgSetEpilogueBegin();
-        unreachable;
     }
 
     // Drop them off at the rbrace.
