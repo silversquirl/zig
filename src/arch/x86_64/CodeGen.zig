@@ -60,7 +60,7 @@ end_di_column: u32,
 /// The value is an offset into the `Function` `code` from the beginning.
 /// To perform the reloc, write 32-bit signed little-endian integer
 /// which is a relative jump, based on the address following the reloc.
-exitlude_jump_relocs: std.ArrayListUnmanaged(usize) = .{},
+exitlude_jump_relocs: std.ArrayListUnmanaged(Mir.Inst.Index) = .{},
 
 /// Whenever there is a runtime branch, we push a Branch onto this stack,
 /// and pop it off when the runtime branch joins. This provides an "overlay"
@@ -178,24 +178,12 @@ const StackAllocation = struct {
 };
 
 const BlockData = struct {
-    relocs: std.ArrayListUnmanaged(Reloc),
+    relocs: std.ArrayListUnmanaged(Mir.Inst.Index),
     /// The first break instruction encounters `null` here and chooses a
     /// machine code value for the block result, populating this field.
     /// Following break instructions encounter that value and use it for
     /// the location to store their block results.
     mcv: MCValue,
-};
-
-const Reloc = union(enum) {
-    /// The value is an offset into the `Function` `code` from the beginning.
-    /// To perform the reloc, write 32-bit signed little-endian integer
-    /// which is a relative jump, based on the address following the reloc.
-    rel32: usize,
-    /// A branch in the ARM instruction set
-    arm_branch: struct {
-        pos: usize,
-        cond: @import("../../arch/arm/bits.zig").Condition,
-    },
 };
 
 const BigTomb = struct {
@@ -2203,7 +2191,7 @@ fn airCondBr(self: *Self, inst: Air.Inst.Index) !void {
     const else_body = self.air.extra[extra.end + then_body.len ..][0..extra.data.else_body_len];
     const liveness_condbr = self.liveness.getCondBr(inst);
 
-    const reloc = Reloc{ .rel32 = 0 };
+    const reloc: Mir.Inst.Index = 0;
     _ = cond;
     // TODO MIR
     // const reloc: Reloc = reloc: {
@@ -2561,25 +2549,9 @@ fn airSwitch(self: *Self, inst: Air.Inst.Index) !void {
     // return self.finishAir(inst, .dead, .{ condition, .none, .none });
 }
 
-fn performReloc(self: *Self, reloc: Reloc) !void {
-    _ = self;
-    _ = reloc;
-    // TODO perform reloc
-    // switch (reloc) {
-    //     .rel32 => |pos| {
-    //         const amt = self.code.items.len - (pos + 4);
-    //         // Here it would be tempting to implement testing for amt == 0 and then elide the
-    //         // jump. However, that will cause a problem because other jumps may assume that they
-    //         // can jump to this code. Or maybe I didn't understand something when I was debugging.
-    //         // It could be worth another look. Anyway, that's why that isn't done here. Probably the
-    //         // best place to elide jumps will be in semantic analysis, by inlining blocks that only
-    //         // only have 1 break instruction.
-    //         const s32_amt = math.cast(i32, amt) catch
-    //             return self.fail("unable to perform relocation: jump too far", .{});
-    //         mem.writeIntLittle(i32, self.code.items[pos..][0..4], s32_amt);
-    //     },
-    //     .arm_branch => unreachable,
-    // }
+fn performReloc(self: *Self, reloc: Mir.Inst.Index) !void {
+    const next_inst = @intCast(u32, self.mir_instructions.len);
+    self.mir_instructions.items(.data)[reloc].inst = next_inst;
 }
 
 fn airBr(self: *Self, inst: Air.Inst.Index) !void {
@@ -2620,16 +2592,17 @@ fn br(self: *Self, block: Air.Inst.Index, operand: Air.Inst.Ref) !void {
 
 fn brVoid(self: *Self, block: Air.Inst.Index) !void {
     const block_data = self.blocks.getPtr(block).?;
-    _ = block_data;
-    // TODO MIR
-    // // Emit a jump with a relocation. It will be patched up after the block ends.
-    // try block_data.relocs.ensureUnusedCapacity(self.gpa, 1);
-    // // TODO optimization opportunity: figure out when we can emit this as a 2 byte instruction
-    // // which is available if the jump is 127 bytes or less forward.
-    // try self.code.resize(self.code.items.len + 5);
-    // self.code.items[self.code.items.len - 5] = 0xe9; // jmp rel32
-    // // Leave the jump offset undefined
-    // block_data.relocs.appendAssumeCapacity(.{ .rel32 = self.code.items.len - 4 });
+    // Emit a jump with a relocation. It will be patched up after the block ends.
+    try block_data.relocs.ensureUnusedCapacity(self.gpa, 1);
+    // Leave the jump offset undefined
+    const jmp_reloc = try self.addInst(.{
+        .tag = .jmp,
+        .ops = (Mir.Ops{
+            .flags = 0b00,
+        }).encode(),
+        .data = undefined,
+    });
+    block_data.relocs.appendAssumeCapacity(jmp_reloc);
 }
 
 fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
