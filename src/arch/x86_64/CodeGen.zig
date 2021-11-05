@@ -2516,25 +2516,16 @@ fn airLoop(self: *Self, inst: Air.Inst.Index) !void {
     const ty_pl = self.air.instructions.items(.data)[inst].ty_pl;
     const loop = self.air.extraData(Air.Block, ty_pl.payload);
     const body = self.air.extra[loop.end..][0..loop.data.body_len];
-    _ = body;
-    return self.fail("TODO airLoop", .{});
-    // const start_index = self.code.items.len;
-    // try self.genBody(body);
-    // try self.jump(start_index);
-    // return self.finishAirBookkeeping();
-}
-
-/// Send control flow to the `index` of `self.code`.
-fn jump(self: *Self, index: usize) !void {
-    try self.code.ensureUnusedCapacity(5);
-    if (math.cast(i8, @intCast(i32, index) - (@intCast(i32, self.code.items.len + 2)))) |delta| {
-        self.code.appendAssumeCapacity(0xeb); // jmp rel8
-        self.code.appendAssumeCapacity(@bitCast(u8, delta));
-    } else |_| {
-        const delta = @intCast(i32, index) - (@intCast(i32, self.code.items.len + 5));
-        self.code.appendAssumeCapacity(0xe9); // jmp rel32
-        mem.writeIntLittle(i32, self.code.addManyAsArrayAssumeCapacity(4), delta);
-    }
+    const jmp_target = @intCast(u32, self.mir_instructions.len);
+    try self.genBody(body);
+    _ = try self.addInst(.{
+        .tag = .jmp,
+        .ops = (Mir.Ops{
+            .flags = 0b00,
+        }).encode(),
+        .data = .{ .inst = jmp_target },
+    });
+    return self.finishAirBookkeeping();
 }
 
 fn airBlock(self: *Self, inst: Air.Inst.Index) !void {
