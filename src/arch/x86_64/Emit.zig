@@ -96,9 +96,16 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .jmp => try emit.mirJmpCall(.jmp, inst),
             .call => try emit.mirJmpCall(.call, inst),
 
+            .cond_jmp_greater_less => try emit.mirCondJmp(.cond_jmp_greater_less, inst),
+            .cond_jmp_above_below => try emit.mirCondJmp(.cond_jmp_above_below, inst),
+            .cond_jmp_eq_ne => try emit.mirCondJmp(.cond_jmp_eq_ne, inst),
+
             .ret => try emit.mirRet(inst),
 
             .syscall => try emit.mirSyscall(),
+
+            .@"test" => try emit.mirTest(inst),
+
             .brk => try emit.mirBrk(),
 
             else => {
@@ -199,6 +206,79 @@ fn mirJmpCall(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!v
     const encoder = try Encoder.init(emit.code, 2);
     encoder.opcode_1byte(0xff);
     encoder.modRm_direct(modrm_ext, ops.reg1.lowId());
+}
+
+fn mirCondJmp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    const opc: u8 = switch (tag) {
+        .cond_jmp_greater_less => blk: {
+            const opc: u8 = switch (ops.flags) {
+                0b00 => 0x8d, // gte
+                0b01 => 0x8f, // gt
+                0b10 => 0x8c, // lt
+                0b11 => 0x8e, // lte
+            };
+            break :blk opc;
+        },
+        .cond_jmp_above_below => blk: {
+            const opc: u8 = switch (ops.flags) {
+                0b00 => 0x83, // above or equal
+                0b01 => 0x87, // above
+                0b10 => 0x82, // below
+                0b11 => 0x86, // below or equal
+            };
+            break :blk opc;
+        },
+        .cond_jmp_eq_ne => blk: {
+            const opc: u8 = switch (@truncate(u1, ops.flags)) {
+                0b0 => 0x84, // ne
+                0b1 => 0x85, // eq
+            };
+            break :blk opc;
+        },
+        else => unreachable,
+    };
+    const encoder = try Encoder.init(emit.code, 6);
+    encoder.opcode_2byte(0x0f, opc);
+    return emit.fail("TODO implement emitting conditionals JNE inst/rel", .{});
+}
+
+fn mirTest(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .@"test");
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    switch (ops.flags) {
+        0b00 => blk: {
+            if (ops.reg2 == .none) {
+                // TEST r/m64, imm32
+                const imm = emit.mir.instructions.items(.data)[inst].imm;
+                if (ops.reg1.to64() == .rax) {
+                    // TODO reduce the size of the instruction if the immediate
+                    // is smaller than 32 bits
+                    const encoder = try Encoder.init(emit.code, 6);
+                    encoder.rex(.{
+                        .w = true,
+                    });
+                    encoder.opcode_1byte(0xa9);
+                    encoder.imm32(imm);
+                    break :blk;
+                }
+                const opc: u8 = if (ops.reg1.size() == 8) 0xf6 else 0xf7;
+                const encoder = try Encoder.init(emit.code, 7);
+                encoder.rex(.{
+                    .w = ops.reg1.size() == 64,
+                    .b = ops.reg1.isExtended(),
+                });
+                encoder.opcode_1byte(opc);
+                encoder.modRm_direct(0, ops.reg1.lowId());
+                encoder.imm32(imm);
+                break :blk;
+            }
+            // TEST r/m64, r64
+            return emit.fail("TODO TEST r/m64, r64", .{});
+        },
+        else => return emit.fail("TODO more TEST alternatives", .{}),
+    }
 }
 
 fn mirRet(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {

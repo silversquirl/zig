@@ -270,6 +270,8 @@ pub fn generate(
     defer function.stack.deinit(bin_file.allocator);
     defer function.blocks.deinit(bin_file.allocator);
     defer function.exitlude_jump_relocs.deinit(bin_file.allocator);
+    defer function.mir_instructions.deinit(bin_file.allocator);
+    defer function.mir_extra.deinit(bin_file.allocator);
 
     var call_info = function.resolveCallingConventionValues(fn_type) catch |err| switch (err) {
         error.CodegenFail => return FnResult{ .fail = function.err_msg.? },
@@ -2125,7 +2127,7 @@ fn ret(self: *Self, mcv: MCValue) !void {
         .ops = (Mir.Ops{
             .flags = 0b00,
         }).encode(),
-        .data = undefined,
+        .data = .{ .inst = undefined },
     });
     try self.exitlude_jump_relocs.append(self.gpa, jmp_reloc);
 }
@@ -2191,62 +2193,76 @@ fn airCondBr(self: *Self, inst: Air.Inst.Index) !void {
     const else_body = self.air.extra[extra.end + then_body.len ..][0..extra.data.else_body_len];
     const liveness_condbr = self.liveness.getCondBr(inst);
 
-    const reloc: Mir.Inst.Index = 0;
-    _ = cond;
-    // TODO MIR
-    // const reloc: Reloc = reloc: {
-    //     try self.code.ensureUnusedCapacity(6);
-
-    //     const opcode: u8 = switch (cond) {
-    //         .compare_flags_signed => |cmp_op| blk: {
-    //             // Here we map to the opposite opcode because the jump is to the false branch.
-    //             const opcode: u8 = switch (cmp_op) {
-    //                 .gte => 0x8c,
-    //                 .gt => 0x8e,
-    //                 .neq => 0x84,
-    //                 .lt => 0x8d,
-    //                 .lte => 0x8f,
-    //                 .eq => 0x85,
-    //             };
-    //             break :blk opcode;
-    //         },
-    //         .compare_flags_unsigned => |cmp_op| blk: {
-    //             // Here we map to the opposite opcode because the jump is to the false branch.
-    //             const opcode: u8 = switch (cmp_op) {
-    //                 .gte => 0x82,
-    //                 .gt => 0x86,
-    //                 .neq => 0x84,
-    //                 .lt => 0x83,
-    //                 .lte => 0x87,
-    //                 .eq => 0x85,
-    //             };
-    //             break :blk opcode;
-    //         },
-    //         .register => |reg| blk: {
-    //             // test reg, 1
-    //             // TODO detect al, ax, eax
-    //             const encoder = try Encoder.init(self.code, 4);
-    //             encoder.rex(.{
-    //                 // TODO audit this codegen: we force w = true here to make
-    //                 // the value affect the big register
-    //                 .w = true,
-    //                 .b = reg.isExtended(),
-    //             });
-    //             encoder.opcode_1byte(0xf6);
-    //             encoder.modRm_direct(
-    //                 0,
-    //                 reg.lowId(),
-    //             );
-    //             encoder.disp8(1);
-    //             break :blk 0x84;
-    //         },
-    //         else => return self.fail("TODO implement condbr {s} when condition is {s}", .{ self.target.cpu.arch, @tagName(cond) }),
-    //     };
-    //     self.code.appendSliceAssumeCapacity(&[_]u8{ 0x0f, opcode });
-    //     const reloc = Reloc{ .rel32 = self.code.items.len };
-    //     self.code.items.len += 4;
-    //     break :reloc reloc;
-    // };
+    const reloc: Mir.Inst.Index = reloc: {
+        switch (cond) {
+            .compare_flags_signed => |cmp_op| {
+                const flags: u2 = switch (cmp_op) {
+                    .gte => 0b10,
+                    .gt => 0b11,
+                    .neq => 0b00,
+                    .lt => 0b00,
+                    .lte => 0b01,
+                    .eq => 0b01,
+                };
+                const tag: Mir.Inst.Tag = if (cmp_op == .neq or cmp_op == .eq)
+                    .cond_jmp_eq_ne
+                else
+                    .cond_jmp_greater_less;
+                const reloc = try self.addInst(.{
+                    .tag = tag,
+                    .ops = (Mir.Ops{
+                        .flags = flags,
+                    }).encode(),
+                    .data = .{ .inst = undefined },
+                });
+                break :reloc reloc;
+            },
+            .compare_flags_unsigned => |cmp_op| {
+                const flags: u2 = switch (cmp_op) {
+                    .gte => 0b10,
+                    .gt => 0b11,
+                    .neq => 0b00,
+                    .lt => 0b00,
+                    .lte => 0b01,
+                    .eq => 0b01,
+                };
+                const tag: Mir.Inst.Tag = if (cmp_op == .neq or cmp_op == .eq)
+                    .cond_jmp_eq_ne
+                else
+                    .cond_jmp_above_below;
+                const reloc = try self.addInst(.{
+                    .tag = tag,
+                    .ops = (Mir.Ops{
+                        .flags = flags,
+                    }).encode(),
+                    .data = .{ .inst = undefined },
+                });
+                break :reloc reloc;
+            },
+            .register => |reg| {
+                _ = try self.addInst(.{
+                    .tag = .@"test",
+                    .ops = (Mir.Ops{
+                        .reg1 = reg,
+                        .flags = 0b00,
+                    }).encode(),
+                    .data = .{ .imm = 1 },
+                });
+                const reloc = try self.addInst(.{
+                    .tag = .cond_jmp_eq_ne,
+                    .ops = (Mir.Ops{
+                        .flags = 0b00,
+                    }).encode(),
+                    .data = .{ .inst = undefined },
+                });
+                break :reloc reloc;
+            },
+            else => return self.fail("TODO implement condbr {s} when condition is {s}", .{
+                self.target.cpu.arch,
+                @tagName(cond),
+            }),
+        }
+    };
 
     // Capture the state of register and stack allocation state so that we can revert to it.
     const parent_next_stack_offset = self.next_stack_offset;
@@ -2600,7 +2616,7 @@ fn brVoid(self: *Self, block: Air.Inst.Index) !void {
         .ops = (Mir.Ops{
             .flags = 0b00,
         }).encode(),
-        .data = undefined,
+        .data = .{ .inst = undefined },
     });
     block_data.relocs.appendAssumeCapacity(jmp_reloc);
 }

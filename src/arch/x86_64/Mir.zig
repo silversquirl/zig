@@ -163,6 +163,25 @@ pub const Inst = struct {
         jmp,
         call,
 
+        /// ops flags:
+        ///     0b00 gte
+        ///     0b01 gt
+        ///     0b10 lt
+        ///     0b11 lte
+        cond_jmp_greater_less,
+
+        /// ops flags:
+        ///     0b00 above or equal
+        ///     0b01 above
+        ///     0b10 below
+        ///     0b11 below or equal
+        cond_jmp_above_below,
+
+        /// ops flags:
+        ///     0bX0 ne
+        ///     0bX1 eq
+        cond_jmp_eq_ne,
+
         /// ops flags:  form:
         ///       0bX0   reg1
         ///       0bX1   [reg1 + imm32]
@@ -178,6 +197,19 @@ pub const Inst = struct {
 
         /// Fast system call
         syscall,
+
+        /// ops flags:  form:
+        ///       0b00  reg1, reg2
+        ///       0b00  reg1, imm32
+        ///       0b01  reg1, [reg2 + imm32]
+        ///       0b01  reg1, [ds:imm32]
+        ///       0b10  [reg1 + imm32], reg2
+        ///       0b10  [reg1 + 0], imm32
+        ///       0b11  [reg1 + imm32], imm32
+        /// Notes:
+        ///  * If reg2 is `none` then it means Data field `imm` is used as the immediate.
+        ///  * When two imm32 values are required, Data field `payload` points at `ImmPair`.
+        @"test",
 
         /// Breakpoint
         brk,
