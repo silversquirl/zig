@@ -1958,7 +1958,6 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
             return self.fail("TODO implement calling runtime known function pointer", .{});
         }
     } else if (self.bin_file.cast(link.File.MachO)) |macho_file| {
-        _ = macho_file;
         for (info.args) |mc_arg, arg_i| {
             const arg = args[arg_i];
             const arg_ty = self.air.typeOf(arg);
@@ -1997,16 +1996,20 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
         if (self.air.value(callee)) |func_value| {
             if (func_value.castTag(.function)) |func_payload| {
                 const func = func_payload.data;
-                _ = func;
-                return self.fail("TODO implement calling functions", .{});
-                // // TODO I'm hacking my way through here by repurposing .memory for storing
-                // // index to the GOT target symbol index.
-                // try self.genSetReg(Type.initTag(.u64), .rax, .{
-                //     .memory = func.owner_decl.link.macho.local_sym_index,
-                // });
-                // // callq *%rax
-                // try self.code.ensureUnusedCapacity(2);
-                // self.code.appendSliceAssumeCapacity(&[2]u8{ 0xff, 0xd0 });
+                // TODO I'm hacking my way through here by repurposing .memory for storing
+                // index to the GOT target symbol index.
+                try self.genSetReg(Type.initTag(.u64), .rax, .{
+                    .memory = func.owner_decl.link.macho.local_sym_index,
+                });
+                // callq *%rax
+                _ = try self.addInst(.{
+                    .tag = .call,
+                    .ops = (Mir.Ops{
+                        .reg1 = .rax,
+                        .flags = 0b01,
+                    }).encode(),
+                    .data = undefined,
+                });
             } else if (func_value.castTag(.extern_fn)) |func_payload| {
                 const decl = func_payload.data;
                 const n_strx = try macho_file.addExternFn(mem.spanZ(decl.name));
