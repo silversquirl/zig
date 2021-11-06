@@ -227,6 +227,11 @@ pub const Inst = struct {
         brk,
 
         /// Pseudo-instructions
+        /// call extern function
+        /// Notes:
+        ///   * target of the call is stored as `extern_fn` in `Data` union.
+        call_extern,
+
         /// end of prologue
         dbg_prologue_end,
 
@@ -248,6 +253,9 @@ pub const Inst = struct {
         inst: Index,
         /// A 32-bit immediate value.
         imm: i32,
+        /// An extern function.
+        /// Index into the linker's string table.
+        extern_fn: u32,
         /// Index into `extra`. Meaning of what can be found there is context-dependent.
         payload: u32,
     };

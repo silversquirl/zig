@@ -113,6 +113,8 @@ pub fn emitMir(emit: *Emit) InnerError!void {
 
             .brk => try emit.mirBrk(),
 
+            .call_extern => try emit.mirCallExtern(inst),
+
             else => {
                 return emit.fail("Implement MIR->Isel lowering for x86_64 for pseudo-inst: {s}", .{tag});
             },
@@ -838,4 +840,32 @@ fn mirLeaRip(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     encoder.opcode_1byte(0x8d);
     encoder.modRm_RIPDisp32(ops.reg1.lowId());
     encoder.disp32(@intCast(i32, @intCast(i64, imm) - rip));
+}
+
+fn mirCallExtern(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .call_extern);
+    const n_strx = emit.mir.instructions.items(.data)[inst].extern_fn;
+    const offset = blk: {
+        const offset = @intCast(u32, emit.code.items.len + 1);
+        // callq
+        const encoder = try Encoder.init(emit.code, 5);
+        encoder.opcode_1byte(0xe8);
+        encoder.imm32(0x0);
+        break :blk offset;
+    };
+    if (emit.bin_file.cast(link.File.MachO)) |macho_file| {
+        // Add relocation to the decl.
+        try macho_file.active_decl.?.link.macho.relocs.append(emit.bin_file.allocator, .{
+            .offset = offset,
+            .target = .{ .global = n_strx },
+            .addend = 0,
+            .subtractor = null,
+            .pcrel = true,
+            .length = 2,
+            .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_BRANCH),
+        });
+    } else {
+        return emit.fail("Implement call_extern for linking backends different than MachO", .{});
+    }
 }

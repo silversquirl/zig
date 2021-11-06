@@ -2009,25 +2009,12 @@ fn airCall(self: *Self, inst: Air.Inst.Index) !void {
                 // self.code.appendSliceAssumeCapacity(&[2]u8{ 0xff, 0xd0 });
             } else if (func_value.castTag(.extern_fn)) |func_payload| {
                 const decl = func_payload.data;
-                _ = decl;
-                return self.fail("TODO implement calling extern functions", .{});
-                // const n_strx = try macho_file.addExternFn(mem.spanZ(decl.name));
-                // const offset = blk: {
-                //     // callq
-                //     try self.code.ensureUnusedCapacity(5);
-                //     self.code.appendSliceAssumeCapacity(&[5]u8{ 0xe8, 0x0, 0x0, 0x0, 0x0 });
-                //     break :blk @intCast(u32, self.code.items.len) - 4;
-                // };
-                // // Add relocation to the decl.
-                // try macho_file.active_decl.?.link.macho.relocs.append(self.bin_file.allocator, .{
-                //     .offset = offset,
-                //     .target = .{ .global = n_strx },
-                //     .addend = 0,
-                //     .subtractor = null,
-                //     .pcrel = true,
-                //     .length = 2,
-                //     .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_BRANCH),
-                // });
+                const n_strx = try macho_file.addExternFn(mem.spanZ(decl.name));
+                _ = try self.addInst(.{
+                    .tag = .call_extern,
+                    .ops = undefined,
+                    .data = .{ .extern_fn = n_strx },
+                });
             } else {
                 return self.fail("TODO implement calling bitcasted functions", .{});
             }
