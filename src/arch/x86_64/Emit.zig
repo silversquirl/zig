@@ -89,6 +89,7 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .movabs => try emit.mirMovabs(inst),
 
             .lea => try emit.mirLea(inst),
+            .lea_rip => try emit.mirLeaRip(inst),
 
             .push => try emit.mirPushPop(.push, inst),
             .pop => try emit.mirPushPop(.pop, inst),
@@ -819,4 +820,22 @@ fn mirLea(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
         encoder.modRm_indirectDisp32(ops.reg1.lowId(), ops.reg2.lowId());
         encoder.disp32(imm);
     }
+}
+
+fn mirLeaRip(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .lea_rip);
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    assert(ops.flags == 0b00);
+    const payload = emit.mir.instructions.items(.data)[inst].payload;
+    const imm = emit.mir.extraData(Mir.Imm64, payload).data.decode();
+    const rip = @intCast(i64, emit.code.items.len + 7);
+    const encoder = try Encoder.init(emit.code, 7);
+    encoder.rex(.{
+        .w = ops.reg1.size() == 64,
+        .r = ops.reg1.isExtended(),
+    });
+    encoder.opcode_1byte(0x8d);
+    encoder.modRm_RIPDisp32(ops.reg1.lowId());
+    encoder.disp32(@intCast(i32, @intCast(i64, imm) - rip));
 }

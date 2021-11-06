@@ -143,6 +143,11 @@ pub const Inst = struct {
         lea_scale_imm,
 
         /// ops flags:  form:
+        ///      0bX0   reg1, [rip + imm32]
+        /// TODO handle more cases
+        lea_rip,
+
+        /// ops flags:  form:
         ///      0bX0   reg1, imm64
         ///      0bX1   rax, moffs64
         /// Notes:

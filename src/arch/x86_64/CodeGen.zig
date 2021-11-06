@@ -3003,31 +3003,15 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             });
         },
         .embedded_in_code => |code_offset| {
-            _ = code_offset;
-            return self.fail("TODO set register embedded_in_code", .{});
-            // // We need the offset from RIP in a signed i32 twos complement.
-            // // The instruction is 7 bytes long and RIP points to the next instruction.
-
-            // // 64-bit LEA is encoded as REX.W 8D /r.
-            // const rip = self.code.items.len + 7;
-            // const big_offset = @intCast(i64, code_offset) - @intCast(i64, rip);
-            // const offset = @intCast(i32, big_offset);
-            // const encoder = try Encoder.init(self.code, 7);
-
-            // // byte 1, always exists because w = true
-            // encoder.rex(.{
-            //     .w = true,
-            //     .r = reg.isExtended(),
-            // });
-            // // byte 2
-            // encoder.opcode_1byte(0x8D);
-            // // byte 3
-            // encoder.modRm_RIPDisp32(reg.lowId());
-            // // byte 4-7
-            // encoder.disp32(offset);
-
-            // // Double check that we haven't done any math errors
-            // assert(rip == self.code.items.len);
+            // We need the offset from RIP in a signed i32 twos complement.
+            const payload = try self.addExtra(Mir.Imm64.encode(code_offset));
+            _ = try self.addInst(.{
+                .tag = .lea_rip,
+                .ops = (Mir.Ops{
+                    .reg1 = reg,
+                }).encode(),
+                .data = .{ .payload = payload },
+            });
         },
         .register => |src_reg| {
             // If the registers are the same, nothing to do.
