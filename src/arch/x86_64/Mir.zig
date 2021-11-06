@@ -169,6 +169,7 @@ pub const Inst = struct {
         ///     0b10 lt
         ///     0b11 lte
         cond_jmp_greater_less,
+        cond_set_byte_greater_less,
 
         /// ops flags:
         ///     0b00 above or equal
@@ -176,11 +177,13 @@ pub const Inst = struct {
         ///     0b10 below
         ///     0b11 below or equal
         cond_jmp_above_below,
+        cond_set_byte_above_below,
 
         /// ops flags:
         ///     0bX0 ne
         ///     0bX1 eq
         cond_jmp_eq_ne,
+        cond_set_byte_eq_ne,
 
         /// ops flags:  form:
         ///       0b00   reg1

@@ -2936,27 +2936,26 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             }
         },
         .compare_flags_unsigned => |op| {
-            _ = op;
-            return self.fail("TODO set register with compare flags value (unsigned)", .{});
-            // const encoder = try Encoder.init(self.code, 7);
-            // // TODO audit this codegen: we force w = true here to make
-            // // the value affect the big register
-            // encoder.rex(.{
-            //     .w = true,
-            //     .b = reg.isExtended(),
-            // });
-            // encoder.opcode_2byte(0x0f, switch (op) {
-            //     .gte => 0x93,
-            //     .gt => 0x97,
-            //     .neq => 0x95,
-            //     .lt => 0x92,
-            //     .lte => 0x96,
-            //     .eq => 0x94,
-            // });
-            // encoder.modRm_direct(
-            //     0,
-            //     reg.lowId(),
-            // );
+            const tag: Mir.Inst.Tag = switch (op) {
+                .gte, .gt, .lt, .lte => .cond_set_byte_above_below,
+                .eq, .neq => .cond_set_byte_eq_ne,
+            };
+            const flags: u2 = switch (op) {
+                .gte => 0b00,
+                .gt => 0b01,
+                .lt => 0b10,
+                .lte => 0b11,
+                .eq => 0b00,
+                .neq => 0b01,
+            };
+            _ = try self.addInst(.{
+                .tag = tag,
+                .ops = (Mir.Ops{
+                    .reg1 = reg,
+                    .flags = flags,
+                }).encode(),
+                .data = undefined,
+            });
         },
         .compare_flags_signed => |op| {
             _ = op;

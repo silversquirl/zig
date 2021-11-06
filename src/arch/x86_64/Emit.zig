@@ -100,6 +100,10 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .cond_jmp_above_below => try emit.mirCondJmp(.cond_jmp_above_below, inst),
             .cond_jmp_eq_ne => try emit.mirCondJmp(.cond_jmp_eq_ne, inst),
 
+            .cond_set_byte_greater_less => try emit.mirCondSetByte(.cond_set_byte_greater_less, inst),
+            .cond_set_byte_above_below => try emit.mirCondSetByte(.cond_set_byte_above_below, inst),
+            .cond_set_byte_eq_ne => try emit.mirCondSetByte(.cond_set_byte_eq_ne, inst),
+
             .ret => try emit.mirRet(inst),
 
             .syscall => try emit.mirSyscall(),
@@ -227,39 +231,141 @@ fn mirJmpCall(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!v
     encoder.modRm_direct(modrm_ext, ops.reg1.lowId());
 }
 
+const CondType = enum {
+    /// greater than or equal
+    gte,
+
+    /// greater than
+    gt,
+
+    /// less than
+    lt,
+
+    /// less than or equal
+    lte,
+
+    /// above or equal
+    ae,
+
+    /// above
+    a,
+
+    /// below
+    b,
+
+    /// below or equal
+    be,
+
+    /// not equal
+    ne,
+
+    /// equal
+    eq,
+
+    fn fromTagAndFlags(tag: Mir.Inst.Tag, flags: u2) CondType {
+        return switch (tag) {
+            .cond_jmp_greater_less,
+            .cond_set_byte_greater_less,
+            => switch (flags) {
+                0b00 => CondType.gte,
+                0b01 => CondType.gt,
+                0b10 => CondType.lt,
+                0b11 => CondType.lte,
+            },
+            .cond_jmp_above_below,
+            .cond_set_byte_above_below,
+            => switch (flags) {
+                0b00 => CondType.ae,
+                0b01 => CondType.a,
+                0b10 => CondType.b,
+                0b11 => CondType.be,
+            },
+            .cond_jmp_eq_ne,
+            .cond_set_byte_eq_ne,
+            => switch (@truncate(u1, flags)) {
+                0b0 => CondType.ne,
+                0b1 => CondType.eq,
+            },
+            else => unreachable,
+        };
+    }
+};
+
+inline fn getCondOpCode(tag: Mir.Inst.Tag, cond: CondType) u8 {
+    switch (cond) {
+        .gte => return switch (tag) {
+            .cond_jmp_greater_less => 0x8d,
+            .cond_set_byte_greater_less => 0x9d,
+            else => unreachable,
+        },
+        .gt => return switch (tag) {
+            .cond_jmp_greater_less => 0x8f,
+            .cond_set_byte_greater_less => 0x9f,
+            else => unreachable,
+        },
+        .lt => return switch (tag) {
+            .cond_jmp_greater_less => 0x8c,
+            .cond_set_byte_greater_less => 0x9c,
+            else => unreachable,
+        },
+        .lte => return switch (tag) {
+            .cond_jmp_greater_less => 0x8e,
+            .cond_set_byte_greater_less => 0x9e,
+            else => unreachable,
+        },
+        .ae => return switch (tag) {
+            .cond_jmp_above_below => 0x83,
+            .cond_set_byte_above_below => 0x93,
+            else => unreachable,
+        },
+        .a => return switch (tag) {
+            .cond_jmp_above_below => 0x87,
+            .cond_set_byte_greater_less => 0x97,
+            else => unreachable,
+        },
+        .b => return switch (tag) {
+            .cond_jmp_above_below => 0x82,
+            .cond_set_byte_greater_less => 0x92,
+            else => unreachable,
+        },
+        .be => return switch (tag) {
+            .cond_jmp_above_below => 0x86,
+            .cond_set_byte_greater_less => 0x96,
+            else => unreachable,
+        },
+        .ne => return switch (tag) {
+            .cond_jmp_eq_ne => 0x84,
+            .cond_set_byte_eq_ne => 0x95,
+            else => unreachable,
+        },
+        .eq => return switch (tag) {
+            .cond_jmp_eq_ne => 0x85,
+            .cond_set_byte_eq_ne => 0x94,
+            else => unreachable,
+        },
+    }
+}
+
 fn mirCondJmp(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
-    const opc: u8 = switch (tag) {
-        .cond_jmp_greater_less => blk: {
-            const opc: u8 = switch (ops.flags) {
-                0b00 => 0x8d, // gte
-                0b01 => 0x8f, // gt
-                0b10 => 0x8c, // lt
-                0b11 => 0x8e, // lte
-            };
-            break :blk opc;
-        },
-        .cond_jmp_above_below => blk: {
-            const opc: u8 = switch (ops.flags) {
-                0b00 => 0x83, // above or equal
-                0b01 => 0x87, // above
-                0b10 => 0x82, // below
-                0b11 => 0x86, // below or equal
-            };
-            break :blk opc;
-        },
-        .cond_jmp_eq_ne => blk: {
-            const opc: u8 = switch (@truncate(u1, ops.flags)) {
-                0b0 => 0x84, // ne
-                0b1 => 0x85, // eq
-            };
-            break :blk opc;
-        },
-        else => unreachable,
-    };
+    const cond = CondType.fromTagAndFlags(tag, ops.flags);
+    const opc = getCondOpCode(tag, cond);
     const encoder = try Encoder.init(emit.code, 6);
     encoder.opcode_2byte(0x0f, opc);
     return emit.fail("TODO implement emitting conditionals JNE inst/rel", .{});
+}
+
+fn mirCondSetByte(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    const cond = CondType.fromTagAndFlags(tag, ops.flags);
+    const opc = getCondOpCode(tag, cond);
+    const encoder = try Encoder.init(emit.code, 4);
+    encoder.rex(.{
+        .w = true,
+        .b = ops.reg1.isExtended(),
+    });
+    encoder.opcode_2byte(0x0f, opc);
+    encoder.modRm_direct(0x0, ops.reg1.lowId());
 }
 
 fn mirTest(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
