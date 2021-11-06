@@ -144,6 +144,10 @@ pub const Inst = struct {
 
         /// ops flags:  form:
         ///      0bX0   reg1, [rip + imm32]
+        ///      0bX1   reg1, [rip + reloc]
+        /// Notes:
+        /// * if flags are 0bX1, `Data` contains `got_entry` for linker to generate
+        ///   valid relocation for.
         /// TODO handle more cases
         lea_rip,
 
@@ -256,6 +260,8 @@ pub const Inst = struct {
         /// An extern function.
         /// Index into the linker's string table.
         extern_fn: u32,
+        /// Entry in the GOT table by index.
+        got_entry: u32,
         /// Index into `extra`. Meaning of what can be found there is context-dependent.
         payload: u32,
     };

@@ -3018,52 +3018,27 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             });
         },
         .memory => |x| {
+            // TODO can we move this entire logic into Emit.zig like with aarch64?
             if (self.bin_file.options.pie) {
-                return self.fail("TODO set reg from memory PIE", .{});
-                // // RIP-relative displacement to the entry in the GOT table.
-                // const abi_size = ty.abiSize(self.target.*);
-                // const encoder = try Encoder.init(self.code, 10);
-
-                // // LEA reg, [<offset>]
-
-                // // We encode the instruction FIRST because prefixes may or may not appear.
-                // // After we encode the instruction, we will know that the displacement bytes
-                // // for [<offset>] will be at self.code.items.len - 4.
-                // encoder.rex(.{
-                //     .w = true, // force 64 bit because loading an address (to the GOT)
-                //     .r = reg.isExtended(),
-                // });
-                // encoder.opcode_1byte(0x8D);
-                // encoder.modRm_RIPDisp32(reg.lowId());
-                // encoder.disp32(0);
-
-                // const offset = @intCast(u32, self.code.items.len);
-
-                // if (self.bin_file.cast(link.File.MachO)) |macho_file| {
-                //     // TODO I think the reloc might be in the wrong place.
-                //     const decl = macho_file.active_decl.?;
-                //     // Load reloc for LEA instruction.
-                //     try decl.link.macho.relocs.append(self.bin_file.allocator, .{
-                //         .offset = offset - 4,
-                //         .target = .{ .local = @intCast(u32, x) },
-                //         .addend = 0,
-                //         .subtractor = null,
-                //         .pcrel = true,
-                //         .length = 2,
-                //         .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_GOT),
-                //     });
-                // } else {
-                //     return self.fail("TODO implement genSetReg for PIE GOT indirection on this platform", .{});
-                // }
-
-                // // MOV reg, [reg]
-                // encoder.rex(.{
-                //     .w = abi_size == 8,
-                //     .r = reg.isExtended(),
-                //     .b = reg.isExtended(),
-                // });
-                // encoder.opcode_1byte(0x8B);
-                // encoder.modRm_indirectDisp0(reg.lowId(), reg.lowId());
+                // TODO we should flag up `x` as GOT symbol entry explicitly rather than as a hack.
+                _ = try self.addInst(.{
+                    .tag = .lea_rip,
+                    .ops = (Mir.Ops{
+                        .reg1 = reg,
+                        .flags = 0b01,
+                    }).encode(),
+                    .data = .{ .got_entry = @intCast(u32, x) },
+                });
+                // MOV reg, [reg]
+                _ = try self.addInst(.{
+                    .tag = .mov,
+                    .ops = (Mir.Ops{
+                        .reg1 = reg,
+                        .reg2 = reg,
+                        .flags = 0b01,
+                    }).encode(),
+                    .data = .{ .imm = 0 },
+                });
             } else if (x <= math.maxInt(i32)) {
                 // mov reg, [ds:imm32]
                 _ = try self.addInst(.{

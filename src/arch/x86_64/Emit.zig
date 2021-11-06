@@ -828,10 +828,7 @@ fn mirLeaRip(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     const tag = emit.mir.instructions.items(.tag)[inst];
     assert(tag == .lea_rip);
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
-    assert(ops.flags == 0b00);
-    const payload = emit.mir.instructions.items(.data)[inst].payload;
-    const imm = emit.mir.extraData(Mir.Imm64, payload).data.decode();
-    const rip = @intCast(i64, emit.code.items.len + 7);
+    const start_offset = emit.code.items.len;
     const encoder = try Encoder.init(emit.code, 7);
     encoder.rex(.{
         .w = ops.reg1.size() == 64,
@@ -839,7 +836,30 @@ fn mirLeaRip(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
     });
     encoder.opcode_1byte(0x8d);
     encoder.modRm_RIPDisp32(ops.reg1.lowId());
-    encoder.disp32(@intCast(i32, @intCast(i64, imm) - rip));
+    const end_offset = emit.code.items.len;
+    if (@truncate(u1, ops.flags) == 0b0) {
+        const payload = emit.mir.instructions.items(.data)[inst].payload;
+        const imm = emit.mir.extraData(Mir.Imm64, payload).data.decode();
+        encoder.disp32(@intCast(i32, @intCast(i64, imm) - @intCast(i64, end_offset - start_offset + 4)));
+    } else {
+        const got_entry = emit.mir.instructions.items(.data)[inst].got_entry;
+        encoder.disp32(0);
+        if (emit.bin_file.cast(link.File.MachO)) |macho_file| {
+            // TODO I think the reloc might be in the wrong place.
+            const decl = macho_file.active_decl.?;
+            try decl.link.macho.relocs.append(emit.bin_file.allocator, .{
+                .offset = @intCast(u32, end_offset),
+                .target = .{ .local = got_entry },
+                .addend = 0,
+                .subtractor = null,
+                .pcrel = true,
+                .length = 2,
+                .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_GOT),
+            });
+        } else {
+            return emit.fail("TODO implement lea_rip for linking backends different than MachO", .{});
+        }
+    }
 }
 
 fn mirCallExtern(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
@@ -866,6 +886,6 @@ fn mirCallExtern(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
             .@"type" = @enumToInt(std.macho.reloc_type_x86_64.X86_64_RELOC_BRANCH),
         });
     } else {
-        return emit.fail("Implement call_extern for linking backends different than MachO", .{});
+        return emit.fail("TODO implement call_extern for linking backends different than MachO", .{});
     }
 }
