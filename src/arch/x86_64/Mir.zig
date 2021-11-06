@@ -142,6 +142,20 @@ pub const Inst = struct {
         lea_scale_dst,
         lea_scale_imm,
 
+        /// ops flags: form:
+        ///      0bX0  reg1
+        ///      0bX1  [reg1 + imm32]
+        imul,
+        idiv,
+
+        /// ops flags:  form:
+        ///      0b00  reg1, reg2
+        ///      0b01  reg1, [reg2 + imm32]
+        ///      0b01  reg1, [imm32] if reg2 is none
+        ///      0b10  reg1, reg2, imm32
+        ///      0b11  reg1, [reg2 + imm32], imm32
+        imul_complex,
+
         /// ops flags:  form:
         ///      0bX0   reg1, [rip + imm32]
         ///      0bX1   reg1, [rip + reloc]

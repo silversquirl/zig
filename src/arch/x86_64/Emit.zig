@@ -91,6 +91,8 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .lea => try emit.mirLea(inst),
             .lea_rip => try emit.mirLeaRip(inst),
 
+            .imul_complex => try emit.mirIMulComplex(inst),
+
             .push => try emit.mirPushPop(.push, inst),
             .pop => try emit.mirPushPop(.pop, inst),
 
@@ -782,6 +784,44 @@ fn mirMovabs(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
         } else {
             encoder.imm32(imm);
         }
+    }
+}
+
+fn mirIMulComplex(emit: *Emit, inst: Mir.Inst.Index) InnerError!void {
+    const tag = emit.mir.instructions.items(.tag)[inst];
+    assert(tag == .imul_complex);
+    const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
+    switch (ops.flags) {
+        0b00 => {
+            const encoder = try Encoder.init(emit.code, 4);
+            encoder.rex(.{
+                .w = ops.reg1.size() == 64,
+                .r = ops.reg1.isExtended(),
+                .b = ops.reg2.isExtended(),
+            });
+            encoder.opcode_2byte(0x0f, 0xaf);
+            encoder.modRm_direct(ops.reg1.lowId(), ops.reg2.lowId());
+        },
+        0b10 => {
+            const imm = emit.mir.instructions.items(.data)[inst].imm;
+            const opc: u8 = if (imm <= math.maxInt(i8)) 0x6b else 0x69;
+            const encoder = try Encoder.init(emit.code, 7);
+            encoder.rex(.{
+                .w = ops.reg1.size() == 64,
+                .r = ops.reg1.isExtended(),
+                .b = ops.reg1.isExtended(),
+            });
+            encoder.opcode_1byte(opc);
+            encoder.modRm_direct(ops.reg1.lowId(), ops.reg2.lowId());
+            if (imm <= math.maxInt(i8)) {
+                encoder.imm8(@intCast(i8, imm));
+            } else if (imm <= math.maxInt(i16)) {
+                encoder.imm16(@intCast(i16, imm));
+            } else {
+                encoder.imm32(imm);
+            }
+        },
+        else => return emit.fail("TODO implement imul", .{}),
     }
 }
 

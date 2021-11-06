@@ -1541,7 +1541,7 @@ fn genBinMathOp(self: *Self, inst: Air.Inst.Index, op_lhs: Air.Inst.Ref, op_rhs:
         .bool_and, .bit_and => try self.genBinMathOpMir(.@"and", dst_ty, dst_mcv, src_mcv),
         .sub, .subwrap => try self.genBinMathOpMir(.sub, dst_ty, dst_mcv, src_mcv),
         .xor, .not => try self.genBinMathOpMir(.xor, dst_ty, dst_mcv, src_mcv),
-        .mul, .mulwrap => return self.fail("TODO MIR mul", .{}),
+        .mul, .mulwrap => try self.genIMulOpMir(dst_ty, dst_mcv, src_mcv),
         else => unreachable,
     }
 
@@ -1660,154 +1660,105 @@ fn genBinMathOpMir(
     }
 }
 
-/// Performs integer multiplication between dst_mcv and src_mcv, storing the result in dst_mcv.
-//fn genX8664Imul(
-//    self: *Self,
-//    dst_ty: Type,
-//    dst_mcv: MCValue,
-//    src_mcv: MCValue,
-//) !void {
-//    switch (dst_mcv) {
-//        .none => unreachable,
-//        .undef => unreachable,
-//        .dead, .unreach, .immediate => unreachable,
-//        .compare_flags_unsigned => unreachable,
-//        .compare_flags_signed => unreachable,
-//        .ptr_stack_offset => unreachable,
-//        .ptr_embedded_in_code => unreachable,
-//        .register => |dst_reg| {
-//            switch (src_mcv) {
-//                .none => unreachable,
-//                .undef => try self.genSetReg(dst_ty, dst_reg, .undef),
-//                .dead, .unreach => unreachable,
-//                .ptr_stack_offset => unreachable,
-//                .ptr_embedded_in_code => unreachable,
-//                .register => |src_reg| {
-//                    // register, register
-//                    //
-//                    // Use the following imul opcode
-//                    // 0F AF /r: IMUL r32/64, r/m32/64
-//                    const abi_size = dst_ty.abiSize(self.target.*);
-//                    const encoder = try Encoder.init(self.code, 4);
-//                    encoder.rex(.{
-//                        .w = abi_size == 8,
-//                        .r = dst_reg.isExtended(),
-//                        .b = src_reg.isExtended(),
-//                    });
-//                    encoder.opcode_2byte(0x0f, 0xaf);
-//                    encoder.modRm_direct(
-//                        dst_reg.lowId(),
-//                        src_reg.lowId(),
-//                    );
-//                },
-//                .immediate => |imm| {
-//                    // register, immediate:
-//                    // depends on size of immediate.
-//                    //
-//                    // immediate fits in i8:
-//                    // 6B /r ib: IMUL r32/64, r/m32/64, imm8
-//                    //
-//                    // immediate fits in i32:
-//                    // 69 /r id: IMUL r32/64, r/m32/64, imm32
-//                    //
-//                    // immediate is huge:
-//                    // split into 2 instructions
-//                    // 1) copy the 64 bit immediate into a tmp register
-//                    // 2) perform register,register mul
-//                    // 0F AF /r: IMUL r32/64, r/m32/64
-//                    if (math.minInt(i8) <= imm and imm <= math.maxInt(i8)) {
-//                        const abi_size = dst_ty.abiSize(self.target.*);
-//                        const encoder = try Encoder.init(self.code, 4);
-//                        encoder.rex(.{
-//                            .w = abi_size == 8,
-//                            .r = dst_reg.isExtended(),
-//                            .b = dst_reg.isExtended(),
-//                        });
-//                        encoder.opcode_1byte(0x6B);
-//                        encoder.modRm_direct(
-//                            dst_reg.lowId(),
-//                            dst_reg.lowId(),
-//                        );
-//                        encoder.imm8(@intCast(i8, imm));
-//                    } else if (math.minInt(i32) <= imm and imm <= math.maxInt(i32)) {
-//                        const abi_size = dst_ty.abiSize(self.target.*);
-//                        const encoder = try Encoder.init(self.code, 7);
-//                        encoder.rex(.{
-//                            .w = abi_size == 8,
-//                            .r = dst_reg.isExtended(),
-//                            .b = dst_reg.isExtended(),
-//                        });
-//                        encoder.opcode_1byte(0x69);
-//                        encoder.modRm_direct(
-//                            dst_reg.lowId(),
-//                            dst_reg.lowId(),
-//                        );
-//                        encoder.imm32(@intCast(i32, imm));
-//                    } else {
-//                        const src_reg = try self.copyToTmpRegister(dst_ty, src_mcv);
-//                        return self.genX8664Imul(dst_ty, dst_mcv, MCValue{ .register = src_reg });
-//                    }
-//                },
-//                .embedded_in_code, .memory, .stack_offset => {
-//                    return self.fail("TODO implement x86 multiply source memory", .{});
-//                },
-//                .compare_flags_unsigned => {
-//                    return self.fail("TODO implement x86 multiply source compare flag (unsigned)", .{});
-//                },
-//                .compare_flags_signed => {
-//                    return self.fail("TODO implement x86 multiply source compare flag (signed)", .{});
-//                },
-//            }
-//        },
-//        .stack_offset => |off| {
-//            switch (src_mcv) {
-//                .none => unreachable,
-//                .undef => return self.genSetStack(dst_ty, off, .undef),
-//                .dead, .unreach => unreachable,
-//                .ptr_stack_offset => unreachable,
-//                .ptr_embedded_in_code => unreachable,
-//                .register => |src_reg| {
-//                    // copy dst to a register
-//                    const dst_reg = try self.copyToTmpRegister(dst_ty, dst_mcv);
-//                    // multiply into dst_reg
-//                    // register, register
-//                    // Use the following imul opcode
-//                    // 0F AF /r: IMUL r32/64, r/m32/64
-//                    const abi_size = dst_ty.abiSize(self.target.*);
-//                    const encoder = try Encoder.init(self.code, 4);
-//                    encoder.rex(.{
-//                        .w = abi_size == 8,
-//                        .r = dst_reg.isExtended(),
-//                        .b = src_reg.isExtended(),
-//                    });
-//                    encoder.opcode_2byte(0x0f, 0xaf);
-//                    encoder.modRm_direct(
-//                        dst_reg.lowId(),
-//                        src_reg.lowId(),
-//                    );
-//                    // copy dst_reg back out
-//                    return self.genSetStack(dst_ty, off, MCValue{ .register = dst_reg });
-//                },
-//                .immediate => |imm| {
-//                    _ = imm;
-//                    return self.fail("TODO implement x86 multiply source immediate", .{});
-//                },
-//                .embedded_in_code, .memory, .stack_offset => {
-//                    return self.fail("TODO implement x86 multiply source memory", .{});
-//                },
-//                .compare_flags_unsigned => {
-//                    return self.fail("TODO implement x86 multiply source compare flag (unsigned)", .{});
-//                },
-//                .compare_flags_signed => {
-//                    return self.fail("TODO implement x86 multiply source compare flag (signed)", .{});
-//                },
-//            }
-//        },
-//        .embedded_in_code, .memory => {
-//            return self.fail("TODO implement x86 multiply destination memory", .{});
-//        },
-//    }
-//}
+// Performs integer multiplication between dst_mcv and src_mcv, storing the result in dst_mcv.
+fn genIMulOpMir(self: *Self, dst_ty: Type, dst_mcv: MCValue, src_mcv: MCValue) !void {
+    switch (dst_mcv) {
+        .none => unreachable,
+        .undef => unreachable,
+        .dead, .unreach, .immediate => unreachable,
+        .compare_flags_unsigned => unreachable,
+        .compare_flags_signed => unreachable,
+        .ptr_stack_offset => unreachable,
+        .ptr_embedded_in_code => unreachable,
+        .register => |dst_reg| {
+            switch (src_mcv) {
+                .none => unreachable,
+                .undef => try self.genSetReg(dst_ty, dst_reg, .undef),
+                .dead, .unreach => unreachable,
+                .ptr_stack_offset => unreachable,
+                .ptr_embedded_in_code => unreachable,
+                .register => |src_reg| {
+                    // register, register
+                    _ = try self.addInst(.{
+                        .tag = .imul_complex,
+                        .ops = (Mir.Ops{
+                            .reg1 = dst_reg,
+                            .reg2 = src_reg,
+                        }).encode(),
+                        .data = undefined,
+                    });
+                },
+                .immediate => |imm| {
+                    // register, immediate
+                    if (imm <= math.maxInt(i32)) {
+                        _ = try self.addInst(.{
+                            .tag = .imul_complex,
+                            .ops = (Mir.Ops{
+                                .reg1 = dst_reg,
+                                .reg2 = dst_reg,
+                                .flags = 0b10,
+                            }).encode(),
+                            .data = .{ .imm = @intCast(i32, imm) },
+                        });
+                    } else {
+                        const src_reg = try self.copyToTmpRegister(dst_ty, src_mcv);
+                        return self.genIMulOpMir(dst_ty, dst_mcv, MCValue{ .register = src_reg });
+                    }
+                },
+                .embedded_in_code, .memory, .stack_offset => {
+                    return self.fail("TODO implement x86 multiply source memory", .{});
+                },
+                .compare_flags_unsigned => {
+                    return self.fail("TODO implement x86 multiply source compare flag (unsigned)", .{});
+                },
+                .compare_flags_signed => {
+                    return self.fail("TODO implement x86 multiply source compare flag (signed)", .{});
+                },
+            }
+        },
+        .stack_offset => |off| {
+            switch (src_mcv) {
+                .none => unreachable,
+                .undef => return self.genSetStack(dst_ty, off, .undef),
+                .dead, .unreach => unreachable,
+                .ptr_stack_offset => unreachable,
+                .ptr_embedded_in_code => unreachable,
+                .register => |src_reg| {
+                    // copy dst to a register
+                    const dst_reg = try self.copyToTmpRegister(dst_ty, dst_mcv);
+                    // multiply into dst_reg
+                    // register, register
+                    _ = try self.addInst(.{
+                        .tag = .imul_complex,
+                        .ops = (Mir.Ops{
+                            .reg1 = dst_reg,
+                            .reg2 = src_reg,
+                        }).encode(),
+                        .data = undefined,
+                    });
+                    // copy dst_reg back out
+                    return self.genSetStack(dst_ty, off, MCValue{ .register = dst_reg });
+                },
+                .immediate => |imm| {
+                    _ = imm;
+                    return self.fail("TODO implement x86 multiply source immediate", .{});
+                },
+                .embedded_in_code, .memory, .stack_offset => {
+                    return self.fail("TODO implement x86 multiply source memory", .{});
+                },
+                .compare_flags_unsigned => {
+                    return self.fail("TODO implement x86 multiply source compare flag (unsigned)", .{});
+                },
+                .compare_flags_signed => {
+                    return self.fail("TODO implement x86 multiply source compare flag (signed)", .{});
+                },
+            }
+        },
+        .embedded_in_code, .memory => {
+            return self.fail("TODO implement x86 multiply destination memory", .{});
+        },
+    }
+}
 
 fn genArgDbgInfo(self: *Self, inst: Air.Inst.Index, mcv: MCValue) !void {
     const ty_str = self.air.instructions.items(.data)[inst].ty_str;
