@@ -134,37 +134,56 @@ fn mirSyscall(emit: *Emit) InnerError!void {
 
 fn mirPushPop(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) InnerError!void {
     const ops = Mir.Ops.decode(emit.mir.instructions.items(.ops)[inst]);
-    if (@truncate(u1, ops.flags) == 0b0) {
-        // PUSH/POP reg
-        const opc: u8 = switch (tag) {
-            .push => 0x50,
-            .pop => 0x58,
-            else => unreachable,
-        };
-        const encoder = try Encoder.init(emit.code, 1);
-        encoder.opcode_withReg(opc, ops.reg1.lowId());
-    } else {
-        // PUSH/POP r/m64
-        const imm = emit.mir.instructions.items(.data)[inst].imm;
-        const opc: u8 = switch (tag) {
-            .push => 0xff,
-            .pop => 0x8f,
-            else => unreachable,
-        };
-        const modrm_ext: u3 = switch (tag) {
-            .push => 0x6,
-            .pop => 0x0,
-            else => unreachable,
-        };
-        const encoder = try Encoder.init(emit.code, 6);
-        encoder.opcode_1byte(opc);
-        if (math.cast(i8, imm)) |imm_i8| {
-            encoder.modRm_indirectDisp8(modrm_ext, ops.reg1.lowId());
-            encoder.imm8(@intCast(i8, imm_i8));
-        } else |_| {
-            encoder.modRm_indirectDisp32(modrm_ext, ops.reg1.lowId());
-            encoder.imm32(imm);
-        }
+    switch (ops.flags) {
+        0b00 => {
+            // PUSH/POP reg
+            const opc: u8 = switch (tag) {
+                .push => 0x50,
+                .pop => 0x58,
+                else => unreachable,
+            };
+            const encoder = try Encoder.init(emit.code, 1);
+            encoder.opcode_withReg(opc, ops.reg1.lowId());
+        },
+        0b01 => {
+            // PUSH/POP r/m64
+            const imm = emit.mir.instructions.items(.data)[inst].imm;
+            const opc: u8 = switch (tag) {
+                .push => 0xff,
+                .pop => 0x8f,
+                else => unreachable,
+            };
+            const modrm_ext: u3 = switch (tag) {
+                .push => 0x6,
+                .pop => 0x0,
+                else => unreachable,
+            };
+            const encoder = try Encoder.init(emit.code, 6);
+            encoder.opcode_1byte(opc);
+            if (math.cast(i8, imm)) |imm_i8| {
+                encoder.modRm_indirectDisp8(modrm_ext, ops.reg1.lowId());
+                encoder.imm8(@intCast(i8, imm_i8));
+            } else |_| {
+                encoder.modRm_indirectDisp32(modrm_ext, ops.reg1.lowId());
+                encoder.imm32(imm);
+            }
+        },
+        0b10 => {
+            // PUSH imm32
+            assert(tag == .push);
+            const imm = emit.mir.instructions.items(.data)[inst].imm;
+            const opc: u8 = if (imm <= math.maxInt(i8)) 0x6a else 0x6b;
+            const encoder = try Encoder.init(emit.code, 2);
+            encoder.opcode_1byte(opc);
+            if (imm <= math.maxInt(i8)) {
+                encoder.imm8(@intCast(i8, imm));
+            } else if (imm <= math.maxInt(i16)) {
+                encoder.imm16(@intCast(i16, imm));
+            } else {
+                encoder.imm32(imm);
+            }
+        },
+        0b11 => unreachable,
     }
 }
 

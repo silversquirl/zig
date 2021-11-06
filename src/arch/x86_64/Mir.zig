@@ -183,8 +183,12 @@ pub const Inst = struct {
         cond_jmp_eq_ne,
 
         /// ops flags:  form:
-        ///       0bX0   reg1
-        ///       0bX1   [reg1 + imm32]
+        ///       0b00   reg1
+        ///       0b01   [reg1 + imm32]
+        ///       0b10   imm32
+        /// Notes:
+        ///  * If 0b10 is specified and the tag is push, pushes immediate onto the stack
+        ///    using the mnemonic PUSH imm32.
         push,
         pop,
 

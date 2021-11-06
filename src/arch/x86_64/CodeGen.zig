@@ -2686,8 +2686,13 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
                         const n = std.fmt.parseInt(u8, ins[4 + l + 1 ..], 10) catch {
                             return self.fail("TODO implement more inline asm int parsing", .{});
                         };
-                        _ = n;
-                        return self.fail("TODO MIR push imm", .{});
+                        _ = try self.addInst(.{
+                            .tag = .push,
+                            .ops = (Mir.Ops{
+                                .flags = 0b10,
+                            }).encode(),
+                            .data = .{ .imm = n },
+                        });
                     } else if (mem.indexOf(u8, arg, "%%")) |l| {
                         const reg_name = ins[4 + l + 2 ..];
                         const reg = parseRegName(reg_name) orelse
