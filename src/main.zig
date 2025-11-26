@@ -4717,10 +4717,10 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
             writeSimpleTemplateFile(Package.Manifest.basename,
                 \\.{{
                 \\    .name = .{s},
-                \\    .version = "0.0.1",
+                \\    .version = "0.0.0",
+                \\    .fingerprint = 0x{x},
                 \\    .minimum_zig_version = "{s}",
                 \\    .paths = .{{""}},
-                \\    .fingerprint = 0x{x},
                 \\}}
                 \\
             , .{
